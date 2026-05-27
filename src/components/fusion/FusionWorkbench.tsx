@@ -34,6 +34,10 @@ import { AdaptiveImage } from "@/components/ui/adaptive-image";
 import { useAdminModels } from "@/hooks/use-admin-models";
 import { getFusionRowImages, setFusionRowImages } from "@/lib/workbench-images";
 import {
+  ASPECT_RATIOS,
+  ASPECT_RATIO_LABELS,
+} from "@/server/ai-gateway/ephone/image-sizes";
+import {
   expandColumnWidths,
   sumColumnWidths,
   useWorkbenchTableContainer,
@@ -41,8 +45,8 @@ import {
 
 type FusionColKey =
   | "index"
-  | "base"
   | "print"
+  | "base"
   | "prompt"
   | "preview"
   | "remark"
@@ -51,8 +55,8 @@ type FusionColKey =
 const FUSION_COL_WIDTHS_KEY = "fusion-workbench-col-widths";
 const DEFAULT_FUSION_COL_WIDTHS: Record<FusionColKey, number> = {
   index: 48,
-  base: 168,
   print: 168,
+  base: 168,
   prompt: 240,
   preview: 200,
   remark: 120,
@@ -214,7 +218,7 @@ function BaseImageField({
 
   return (
     <div className="space-y-1 w-full min-w-0">
-      <span className="text-[10px] text-muted-foreground">底版</span>
+      <span className="text-[10px] text-muted-foreground">印花</span>
       {!url && (
         <Input
           value={url}
@@ -249,7 +253,7 @@ function BaseImageField({
           <AdaptiveImage src={url} maxHeightClass="max-h-48" className="border-0 rounded-none" />
         ) : (
           <div className="h-24 flex flex-col items-center justify-center gap-1 px-2 text-muted-foreground">
-            <span className="text-[10px]">点击选择底版</span>
+            <span className="text-[10px]">点击批量添加印花</span>
             <span className="text-[9px] opacity-70">可多选，自动扩展行</span>
           </div>
         )}
@@ -262,7 +266,7 @@ function BaseImageField({
           className="h-7 text-xs w-full"
           onClick={() => inputRef.current?.click()}
         >
-          更换 / 追加底版
+          更换 / 追加印花
         </Button>
       )}
     </div>
@@ -453,16 +457,20 @@ function FusionRow({
   index,
   row,
   batchId,
+  aspectRatio,
   onRefresh,
   onImportBaseImages,
   onImportPrintImages,
+  onFillDownBase,
 }: {
   index: number;
   row: FusionRowData;
   batchId: string;
+  aspectRatio: (typeof ASPECT_RATIOS)[number];
   onRefresh: () => void;
   onImportBaseImages: (fromRowId: string, files: File[]) => Promise<void>;
   onImportPrintImages: (anchorRowId: string, files: File[]) => Promise<void>;
+  onFillDownBase: (fromRowId: string) => void;
 }) {
   const isGroupAnchor =
     row.baseGroupAnchorId === row.id && (row.baseGroupSize ?? 0) > 0;
@@ -541,10 +549,9 @@ function FusionRow({
   useEffect(() => {
     setPrompt(row.prompt);
     setRemark(row.remark ?? "");
-    const imgs = getFusionRowImages(batchId)[row.id];
-    setBaseUrl(imgs?.base ?? "");
-    setPrintUrl(imgs?.print ?? "");
-  }, [row.id, batchId, row.prompt, row.remark]);
+    setBaseUrl(stored?.base ?? "");
+    setPrintUrl(stored?.print ?? "");
+  }, [row.id, batchId, row.prompt, row.remark, stored?.base, stored?.print]);
 
   const updateBaseUrl = useCallback(
     (url: string) => {
@@ -575,6 +582,7 @@ function FusionRow({
         modelId: imageModelId,
         baseImageUrl: baseUrl,
         printImageUrl: printUrl,
+        aspectRatio,
       });
       setPendingGenId(result.generationId);
     } catch (e) {
@@ -590,33 +598,38 @@ function FusionRow({
       </td>
       <td className="p-2">
         <BaseImageField
-          url={baseUrl}
-          onChange={updateBaseUrl}
+          url={printUrl}
+          onChange={updatePrintUrl}
           onCommit={() => {}}
           onImportFiles={(files) => onImportBaseImages(row.id, files)}
         />
       </td>
       <td className="p-2">
-        {isGroupAnchor ? (
-          <PrintImageField
-            url={printUrl}
-            groupSize={row.baseGroupSize!}
-            onChange={updatePrintUrl}
-            onCommit={() => {}}
-            onImportFiles={(files) => onImportPrintImages(row.id, files)}
-          />
-        ) : (
+        <div className="space-y-1 w-full min-w-0">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[10px] text-muted-foreground">底版</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-5 px-1 text-[9px] gap-0.5"
+              title="将底版填充到下方所有行"
+              disabled={!baseUrl.trim()}
+              onClick={() => onFillDownBase(row.id)}
+            >
+              <ArrowDownToLine className="size-2.5" />
+              向下填充
+            </Button>
+          </div>
           <ImageField
-            label="印花"
-            url={printUrl}
-            onChange={updatePrintUrl}
+            label=""
+            url={baseUrl}
+            onChange={updateBaseUrl}
             onCommit={() => {}}
-            replaceLabel="更换印花"
-            emptyHint={
-              isGroupMember ? "点击上传印花" : "点击上传"
-            }
+            replaceLabel="更换底版"
+            emptyHint="点击上传底版"
           />
-        )}
+        </div>
       </td>
       <td className="p-2 overflow-hidden">
         <div className="flex items-center justify-between gap-1 mb-1">
@@ -773,6 +786,8 @@ export function FusionWorkbench() {
   const { imageModelId } = useAdminModels();
   const [batchGenerating, setBatchGenerating] = useState(false);
   const [pendingGenIds, setPendingGenIds] = useState<string[]>([]);
+  const [downloading, setDownloading] = useState(false);
+  const [aspectRatio, setAspectRatio] = useState<(typeof ASPECT_RATIOS)[number]>("1:1");
 
   const batchKey = trpc.fusion.getBatch.queryKey({});
 
@@ -793,15 +808,17 @@ export function FusionWorkbench() {
     if (!batchPollQuery.data || pendingGenIds.length === 0) return;
     const gen = batchPollQuery.data;
     if (gen.status === "COMPLETED" || gen.status === "FAILED") {
-      const remaining = pendingGenIds.filter((id) => id !== gen.id);
-      setPendingGenIds(remaining);
-      if (remaining.length === 0) {
-        toast.success("批量生成完成");
-        setBatchGenerating(false);
-        refresh();
-      }
+      setPendingGenIds((prev) => prev.filter((id) => id !== gen.id));
     }
-  }, [batchPollQuery.data]);
+  }, [batchPollQuery.data, refresh, pendingGenIds]);
+
+  useEffect(() => {
+    if (pendingGenIds.length === 0 && batchGenerating) {
+      toast.success("批量生成完成");
+      setBatchGenerating(false);
+      refresh();
+    }
+  }, [pendingGenIds, batchGenerating, refresh]);
 
   const handleImportBaseImages = useCallback(
     async (fromRowId: string, files: File[]) => {
@@ -813,10 +830,10 @@ export function FusionWorkbench() {
         baseImageUrls: urls,
       });
       if (result.created > 0) {
-        toast.success(`已导入 ${urls.length} 张底版，新增 ${result.created} 行`);
+        toast.success(`已导入 ${urls.length} 张印花，新增 ${result.created} 行`);
       }
       for (const a of result.assignments) {
-        setFusionRowImages(batch.id, a.rowId, { base: a.baseImageUrl });
+        setFusionRowImages(batch.id, a.rowId, { print: a.baseImageUrl });
       }
       refresh();
     },
@@ -829,7 +846,7 @@ export function FusionWorkbench() {
       const anchor = rows.find((r) => r.id === anchorRowId);
       const b = anchor?.baseGroupSize ?? 0;
       if (files.length > b) {
-        toast.error(`印花最多 ${b} 张（与底版数量一致）`);
+        toast.error(`底版最多 ${b} 张（与印花数量一致）`);
         return;
       }
       const urls = await Promise.all(files.map(uploadFile));
@@ -838,13 +855,37 @@ export function FusionWorkbench() {
         anchorRowId,
         printImageUrls: urls,
       });
-      toast.success(`已分配 ${urls.length} 张印花`);
+      toast.success(`已分配 ${urls.length} 张底版`);
       for (const a of result.assignments) {
         setFusionRowImages(batch.id, a.rowId, { print: a.printImageUrl });
       }
       refresh();
     },
-    [batch?.id, importPrintImages, refresh],
+    [batch?.id, importPrintImages, refresh, rows],
+  );
+
+  const handleFillDownBase = useCallback(
+    (fromRowId: string) => {
+      if (!batch?.id) return;
+      const images = getFusionRowImages(batch.id);
+      const base = images[fromRowId]?.base;
+      if (!base) {
+        toast.error("当前行没有底版图片");
+        return;
+      }
+      const fromIdx = rows.findIndex((r) => r.id === fromRowId);
+      if (fromIdx < 0) return;
+      let count = 0;
+      for (let i = fromIdx + 1; i < rows.length; i++) {
+        setFusionRowImages(batch.id, rows[i].id, { base });
+        count++;
+      }
+      if (count > 0) {
+        toast.success(`已将底版填充到下方 ${count} 行`);
+        refresh();
+      }
+    },
+    [batch?.id, rows, refresh],
   );
 
   const handleGenerateColumn = useCallback(async () => {
@@ -861,30 +902,64 @@ export function FusionWorkbench() {
     });
 
     if (eligible.length === 0) {
-      toast.error("没有可生成的行，请先上传底版和印花");
+      toast.error("没有可生成的行，请先上传印花和底版");
       return;
     }
 
     setBatchGenerating(true);
     try {
-      const ids: string[] = [];
-      for (const row of eligible) {
-        const imgs = images[row.id]!;
-        await updateRow.mutateAsync({ rowId: row.id, prompt: row.prompt });
-        const result = await generate.mutateAsync({
-          rowId: row.id,
-          modelId: imageModelId,
-          baseImageUrl: imgs.base!,
-          printImageUrl: imgs.print!,
-        });
-        ids.push(result.generationId);
-      }
-      setPendingGenIds(ids);
+      const results = await Promise.all(
+        eligible.map(async (row) => {
+          const imgs = images[row.id]!;
+          await updateRow.mutateAsync({ rowId: row.id, prompt: row.prompt });
+          return generate.mutateAsync({
+            rowId: row.id,
+            modelId: imageModelId,
+            baseImageUrl: imgs.base!,
+            printImageUrl: imgs.print!,
+            aspectRatio,
+          });
+        }),
+      );
+      setPendingGenIds(results.map((r) => r.generationId));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "批量生成失败");
       setBatchGenerating(false);
     }
-  }, [batch?.id, rows, imageModelId, updateRow, generate, refresh]);
+  }, [batch?.id, rows, imageModelId, aspectRatio, updateRow, generate, refresh]);
+
+  const handleDownloadAll = useCallback(async () => {
+    const versions = rows
+      .map((r) => r.versions.find((v) => v.id === r.activeVersionId) ?? r.versions[0])
+      .filter((v): v is NonNullable<typeof v> => v != null);
+
+    if (versions.length === 0) {
+      toast.error("没有可下载的融合图");
+      return;
+    }
+
+    setDownloading(true);
+    try {
+      const blobs = await Promise.all(
+        versions.map((v) => fetch(v.outputUrl).then((r) => r.blob())),
+      );
+      for (let i = 0; i < blobs.length; i++) {
+        const objUrl = URL.createObjectURL(blobs[i]);
+        const a = document.createElement("a");
+        a.href = objUrl;
+        a.download = `fusion-${i + 1}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(objUrl);
+      }
+      toast.success(`已下载 ${versions.length} 张图片`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "下载失败");
+    } finally {
+      setDownloading(false);
+    }
+  }, [rows]);
 
   return (
     <div className="flex h-full flex-col">
@@ -892,10 +967,25 @@ export function FusionWorkbench() {
         <div>
           <h1 className="text-lg font-semibold">融合图</h1>
           <p className="text-xs text-muted-foreground">
-            上传底版与印花，填写提示词生成融合预览
+            上传印花与底版，填写提示词生成融合预览
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={aspectRatio}
+            onValueChange={(v) => v && setAspectRatio(v as (typeof ASPECT_RATIOS)[number])}
+          >
+            <SelectTrigger className="h-8 w-[120px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ASPECT_RATIOS.map((r) => (
+                <SelectItem key={r} value={r}>
+                  {ASPECT_RATIO_LABELS[r]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button
             variant="outline"
             size="sm"
@@ -939,16 +1029,16 @@ export function FusionWorkbench() {
                   序号
                 </ResizableTh>
                 <ResizableTh
-                  width={displayWidths.base}
-                  onResize={(d) => resizeCol("base", d)}
-                >
-                  底版
-                </ResizableTh>
-                <ResizableTh
                   width={displayWidths.print}
                   onResize={(d) => resizeCol("print", d)}
                 >
                   印花
+                </ResizableTh>
+                <ResizableTh
+                  width={displayWidths.base}
+                  onResize={(d) => resizeCol("base", d)}
+                >
+                  底版
                 </ResizableTh>
                 <ResizableTh
                   width={displayWidths.prompt}
@@ -962,19 +1052,36 @@ export function FusionWorkbench() {
                 >
                   <div className="flex items-center justify-between gap-1 pr-2">
                     <span>融合图预览</span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="h-6 text-[10px] shrink-0"
-                      disabled={batchGenerating || rows.length === 0}
-                      onClick={() => void handleGenerateColumn()}
-                    >
-                      {batchGenerating ? (
-                        <Loader2 className="size-3 animate-spin" />
-                      ) : (
-                        "生成"
-                      )}
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[10px] shrink-0"
+                        disabled={downloading || rows.length === 0}
+                        onClick={() => void handleDownloadAll()}
+                        title="下载本列所有融合图"
+                      >
+                        {downloading ? (
+                          <Loader2 className="size-3 animate-spin" />
+                        ) : (
+                          "下载"
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-6 text-[10px] shrink-0"
+                        disabled={batchGenerating || rows.length === 0}
+                        onClick={() => void handleGenerateColumn()}
+                      >
+                        {batchGenerating ? (
+                          <Loader2 className="size-3 animate-spin" />
+                        ) : (
+                          "生成"
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 </ResizableTh>
                 <ResizableTh
@@ -1000,9 +1107,11 @@ export function FusionWorkbench() {
                   index={i}
                   row={row}
                   batchId={batch!.id}
+                  aspectRatio={aspectRatio}
                   onRefresh={refresh}
                   onImportBaseImages={handleImportBaseImages}
                   onImportPrintImages={handleImportPrintImages}
+                  onFillDownBase={handleFillDownBase}
                 />
               ))}
             </tbody>

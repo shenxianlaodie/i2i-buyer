@@ -1,19 +1,27 @@
 import type { PoseType } from "@/lib/pose-types";
+import type { AspectRatio } from "@/server/ai-gateway/types";
 import { getPosePrompt } from "@/lib/system-settings";
 import { EphoneClient } from "./client";
-
-function resolveUrl(url: string): string {
-  if (url.startsWith("http") || url.startsWith("data:")) return url;
-  const base =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : "http://localhost:3000");
-  return `${base.replace(/\/$/, "")}${url.startsWith("/") ? url : `/${url}`}`;
-}
+import { resolveUrl } from "./resolve-url";
+import { ASPECT_RATIO_SIZE_MAP } from "./image-sizes";
 
 async function urlToFile(url: string, name: string): Promise<File> {
+  const tempMatch = url.match(/\/api\/temp-upload\/([^/]+)$/);
+  if (tempMatch) {
+    const { getTempUploadData } = await import("@/lib/temp-upload-store");
+    const entry = getTempUploadData(tempMatch[1]);
+    if (entry) {
+      return new File([new Uint8Array(entry.buffer)], name, { type: entry.mime || "image/png" });
+    }
+    throw new Error("参考图已过期，请重新上传");
+  }
+
   url = resolveUrl(url);
+  if (url.startsWith("data:")) {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    return new File([blob], name, { type: blob.type || "image/png" });
+  }
   const res = await fetch(url);
   if (!res.ok) throw new Error(`无法加载图片: ${res.status}`);
   const blob = await res.blob();
@@ -26,6 +34,7 @@ export async function runPoseImage(input: {
   poseType: PoseType;
   extraPrompt?: string;
   modelId?: string;
+  aspectRatio?: AspectRatio;
 }): Promise<{ url: string }> {
   const apiKey = process.env.EPHONE_API_KEY;
   if (!apiKey) throw new Error("请配置 EPHONE_API_KEY");
@@ -44,12 +53,13 @@ export async function runPoseImage(input: {
   const prompt = input.extraPrompt?.trim()
     ? `${posePrompt} ${input.extraPrompt}`
     : posePrompt;
+  const size = ASPECT_RATIO_SIZE_MAP[input.aspectRatio ?? "1:1"] ?? "1024x1024";
 
   const response = await openai.images.edit({
     model,
     image: imageFile,
     prompt,
-    size: "1024x1024",
+    size,
     n: 1,
   });
 

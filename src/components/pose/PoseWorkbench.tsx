@@ -13,8 +13,15 @@ import { useTRPC } from "@/server/trpc/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
-import { Plus, Trash2, Loader2 } from "lucide-react";
+import { Plus, Trash2, Loader2, Download } from "lucide-react";
 import { PoseSection } from "./PoseSection";
 import { ProductCopyFields } from "./ProductCopyFields";
 
@@ -28,6 +35,10 @@ import {
   sumColumnWidths,
   useWorkbenchTableContainer,
 } from "@/lib/workbench-table-layout";
+import {
+  ASPECT_RATIOS,
+  ASPECT_RATIO_LABELS,
+} from "@/server/ai-gateway/ephone/image-sizes";
 
 type PoseColKey =
   | "index"
@@ -153,15 +164,19 @@ function PoseColumnHeader({
   batchId,
   disabled,
   generatingPose,
+  downloadingPose,
   onTogglePose,
   onGeneratePose,
+  onDownloadPose,
 }: {
   rows: PoseRowData[];
   batchId: string | undefined;
   disabled: boolean;
   generatingPose: PoseType | null;
+  downloadingPose: PoseType | null;
   onTogglePose: (pose: PoseType) => void;
   onGeneratePose: (pose: PoseType) => void;
+  onDownloadPose: (pose: PoseType) => void;
 }) {
   const images = batchId ? getPoseRowImages(batchId) : {};
 
@@ -198,23 +213,40 @@ function PoseColumnHeader({
               />
               <span className="truncate">{POSE_LABELS[pose]}</span>
             </label>
-            <Button
-              type="button"
-              size="sm"
-              className="h-5 w-full px-1 text-[9px]"
-              disabled={
-                disabled || generatingPose !== null || !canGenerate
-              }
-              onClick={() => onGeneratePose(pose)}
-            >
-              {generatingPose === pose ? (
-                <Loader2 className="size-2.5 animate-spin" />
-              ) : hasOutput ? (
-                "重新生成"
-              ) : (
-                "生成"
+            <div className="flex gap-1">
+              <Button
+                type="button"
+                size="sm"
+                className="h-5 flex-1 px-1 text-[9px]"
+                disabled={
+                  disabled || generatingPose !== null || !canGenerate
+                }
+                onClick={() => onGeneratePose(pose)}
+              >
+                {generatingPose === pose ? (
+                  <Loader2 className="size-2.5 animate-spin" />
+                ) : (
+                  "生成"
+                )}
+              </Button>
+              {hasOutput && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-5 w-5 p-0 shrink-0"
+                  disabled={downloadingPose !== null}
+                  onClick={() => onDownloadPose(pose)}
+                  title={`下载本列所有${POSE_LABELS[pose]}`}
+                >
+                  {downloadingPose === pose ? (
+                    <Loader2 className="size-2.5 animate-spin" />
+                  ) : (
+                    <Download className="size-2.5" />
+                  )}
+                </Button>
               )}
-            </Button>
+            </div>
           </div>
         );
       })}
@@ -345,6 +377,9 @@ function PoseRow({
   row,
   batchId,
   colWidths,
+  imageModelId,
+  regeneratingRowPose,
+  onRegenerateSinglePose,
   onRefresh,
   onImportSourceImages,
 }: {
@@ -352,6 +387,9 @@ function PoseRow({
   row: PoseRowData;
   batchId: string;
   colWidths: Record<PoseColKey, number>;
+  imageModelId: string;
+  regeneratingRowPose: { rowId: string; pose: PoseType } | null;
+  onRegenerateSinglePose: (rowId: string, pose: PoseType) => void;
   onRefresh: () => void;
   onImportSourceImages: (fromRowId: string, files: File[]) => Promise<void>;
 }) {
@@ -378,9 +416,8 @@ function PoseRow({
   useEffect(() => {
     setProductTitle(row.productTitle ?? "");
     setProductDescription(row.productDescription ?? "");
-    const imgs = getPoseRowImages(batchId)[row.id];
-    setSourceUrl(imgs?.source ?? "");
-  }, [row.id, batchId, row.productTitle, row.productDescription]);
+    setSourceUrl(stored?.source ?? "");
+  }, [row.id, batchId, row.productTitle, row.productDescription, stored?.source]);
 
   const updateSourceUrl = useCallback(
     (url: string) => {
@@ -410,6 +447,16 @@ function PoseRow({
         <PoseSection
           sourceUrl={sourceUrl}
           poseOutputs={row.outputs}
+          rowId={row.id}
+          modelId={imageModelId ?? ""}
+          regeneratingPose={
+            regeneratingRowPose?.rowId === row.id
+              ? regeneratingRowPose.pose
+              : null
+          }
+          onRegeneratePose={(pose) =>
+            void onRegenerateSinglePose(row.id, pose)
+          }
           onRefresh={onRefresh}
         />
       </td>
@@ -510,6 +557,12 @@ export function PoseWorkbench() {
   const [batchBusy, setBatchBusy] = useState(false);
   const [generatingPose, setGeneratingPose] = useState<PoseType | null>(null);
   const [pendingGenIds, setPendingGenIds] = useState<string[]>([]);
+  const [downloadingPose, setDownloadingPose] = useState<PoseType | null>(null);
+  const [aspectRatio, setAspectRatio] = useState<(typeof ASPECT_RATIOS)[number]>("1:1");
+  const [regeneratingRowPose, setRegeneratingRowPose] = useState<{
+    rowId: string;
+    pose: PoseType;
+  } | null>(null);
 
   const batchKey = trpc.pose.getBatch.queryKey({});
 
@@ -530,15 +583,17 @@ export function PoseWorkbench() {
     if (!batchPollQuery.data || pendingGenIds.length === 0) return;
     const gen = batchPollQuery.data;
     if (gen.status === "COMPLETED" || gen.status === "FAILED") {
-      const remaining = pendingGenIds.filter((id) => id !== gen.id);
-      setPendingGenIds(remaining);
-      if (remaining.length === 0) {
-        toast.success(`${POSE_LABELS[generatingPose!]} 生成完成`);
-        setGeneratingPose(null);
-        refresh();
-      }
+      setPendingGenIds((prev) => prev.filter((id) => id !== gen.id));
     }
-  }, [batchPollQuery.data]);
+  }, [batchPollQuery.data, refresh, pendingGenIds]);
+
+  useEffect(() => {
+    if (pendingGenIds.length === 0 && generatingPose) {
+      toast.success(`${POSE_LABELS[generatingPose]} 生成完成`);
+      setGeneratingPose(null);
+      refresh();
+    }
+  }, [pendingGenIds, generatingPose, refresh]);
 
   const handleImportSourceImages = useCallback(
     async (fromRowId: string, files: File[]) => {
@@ -612,23 +667,113 @@ export function PoseWorkbench() {
 
       setGeneratingPose(pose);
       try {
-        const ids: string[] = [];
-        for (const row of eligible) {
-          const result = await regeneratePose.mutateAsync({
-            rowId: row.id,
-            poseType: pose,
-            sourceImageUrl: images[row.id]!.source!.trim(),
-            modelId: imageModelId,
-          });
-          ids.push(result.generationId);
-        }
+        const results = await Promise.all(
+          eligible.map((row) =>
+            regeneratePose.mutateAsync({
+              rowId: row.id,
+              poseType: pose,
+              sourceImageUrl: images[row.id]!.source!.trim(),
+              modelId: imageModelId,
+              aspectRatio,
+            }),
+          ),
+        );
+        const ids = results.map((r) => r.generationId);
         setPendingGenIds(ids);
+        toast.success(`已提交 ${ids.length} 个 ${POSE_LABELS[pose]} 生成任务`);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "生成失败");
         setGeneratingPose(null);
       }
     },
-    [batch?.id, rows, imageModelId, regeneratePose, refresh],
+    [batch?.id, rows, imageModelId, aspectRatio, regeneratePose, refresh],
+  );
+
+  const handleRegenerateSinglePose = useCallback(
+    async (rowId: string, pose: PoseType) => {
+      if (!imageModelId) {
+        toast.error("请先选择图片模型");
+        return;
+      }
+      if (!batch?.id) return;
+      const images = getPoseRowImages(batch.id);
+      const sourceUrl = images[rowId]?.source?.trim();
+      if (!sourceUrl) {
+        toast.error("请先上传参考图");
+        return;
+      }
+      setRegeneratingRowPose({ rowId, pose });
+      try {
+        const result = await regeneratePose.mutateAsync({
+          rowId,
+          poseType: pose,
+          sourceImageUrl: sourceUrl,
+          modelId: imageModelId,
+        });
+        setPendingGenIds([result.generationId]);
+        toast.success(`已提交 ${POSE_LABELS[pose]} 重新生成`);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "重新生成失败");
+        setRegeneratingRowPose(null);
+      }
+    },
+    [batch?.id, imageModelId, aspectRatio, regeneratePose],
+  );
+
+  // Clear regenerating state when pending generation completes
+  useEffect(() => {
+    if (pendingGenIds.length === 0 && regeneratingRowPose) {
+      setRegeneratingRowPose(null);
+      refresh();
+    }
+  }, [pendingGenIds, regeneratingRowPose, refresh]);
+
+  const handleDownloadPose = useCallback(
+    async (pose: PoseType) => {
+      const items: { url: string; label: string }[] = [];
+      for (let i = 0; i < rows.length; i++) {
+        const output = rows[i].outputs.find((o) => o.poseType === pose);
+        if (!output?.outputUrl) continue;
+        const active =
+          output.versions.find((v) => v.id === output.activeVersionId) ??
+          output.versions[0];
+        const url = active?.outputUrl ?? output.outputUrl;
+        if (url) {
+          items.push({
+            url,
+            label: `${i + 1}-${POSE_LABELS[pose]}.png`,
+          });
+        }
+      }
+
+      if (items.length === 0) {
+        toast.error(`没有可下载的${POSE_LABELS[pose]}`);
+        return;
+      }
+
+      setDownloadingPose(pose);
+      try {
+        const blobs = await Promise.all(
+          items.map(({ url }) => fetch(url).then((r) => r.blob())),
+        );
+        for (let i = 0; i < blobs.length; i++) {
+          const objUrl = URL.createObjectURL(blobs[i]);
+          const a = document.createElement("a");
+          a.href = objUrl;
+          a.download = items[i].label;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(objUrl);
+        }
+        toast.success(`已下载 ${items.length} 张图片`);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "下载失败");
+      } finally {
+        setDownloadingPose(null);
+      }
+    },
+    [rows],
   );
 
   return (
@@ -641,6 +786,21 @@ export function PoseWorkbench() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={aspectRatio}
+            onValueChange={(v) => v && setAspectRatio(v as (typeof ASPECT_RATIOS)[number])}
+          >
+            <SelectTrigger className="h-8 w-[120px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ASPECT_RATIOS.map((r) => (
+                <SelectItem key={r} value={r}>
+                  {ASPECT_RATIO_LABELS[r]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button
             variant="outline"
             size="sm"
@@ -702,8 +862,10 @@ export function PoseWorkbench() {
                     batchId={batch?.id}
                     disabled={batchBusy || rows.length === 0}
                     generatingPose={generatingPose}
+                    downloadingPose={downloadingPose}
                     onTogglePose={(pose) => void handleBatchTogglePose(pose)}
                     onGeneratePose={(pose) => void handleBatchGeneratePose(pose)}
+                    onDownloadPose={(pose) => void handleDownloadPose(pose)}
                   />
                 </ResizableTh>
                 <ResizableTh
@@ -735,6 +897,9 @@ export function PoseWorkbench() {
                   row={row}
                   batchId={batch!.id}
                   colWidths={displayWidths}
+                  imageModelId={imageModelId ?? ""}
+                  regeneratingRowPose={regeneratingRowPose}
+                  onRegenerateSinglePose={handleRegenerateSinglePose}
                   onRefresh={refresh}
                   onImportSourceImages={handleImportSourceImages}
                 />

@@ -10,16 +10,25 @@ export const SETTING_KEYS = {
   productDescription: "product_description_prompt",
   defaultImageModel: "default_image_model",
   defaultVideoModel: "default_video_model",
+  defaultTextModel: "default_text_model",
 } as const;
 
 const FALLBACK_IMAGE_MODEL = "gpt-image-1";
 const FALLBACK_VIDEO_MODEL = "kling-v1-6/image-to-video";
+const FALLBACK_TEXT_MODEL = "gpt-4o-mini";
 
-export async function getModelSettings() {
+let modelSettingsCache: { data: Awaited<ReturnType<typeof fetchModelSettings>>; at: number } | null = null;
+const MODEL_SETTINGS_TTL = 60_000;
+
+async function fetchModelSettings() {
   const rows = await db.systemSetting.findMany({
     where: {
       key: {
-        in: [SETTING_KEYS.defaultImageModel, SETTING_KEYS.defaultVideoModel],
+        in: [
+          SETTING_KEYS.defaultImageModel,
+          SETTING_KEYS.defaultVideoModel,
+          SETTING_KEYS.defaultTextModel,
+        ],
       },
     },
   });
@@ -27,13 +36,25 @@ export async function getModelSettings() {
   return {
     imageModelId: map.get(SETTING_KEYS.defaultImageModel) ?? FALLBACK_IMAGE_MODEL,
     videoModelId: map.get(SETTING_KEYS.defaultVideoModel) ?? FALLBACK_VIDEO_MODEL,
+    textModelId: map.get(SETTING_KEYS.defaultTextModel) ?? FALLBACK_TEXT_MODEL,
   };
+}
+
+export async function getModelSettings() {
+  if (modelSettingsCache && Date.now() - modelSettingsCache.at < MODEL_SETTINGS_TTL) {
+    return modelSettingsCache.data;
+  }
+  const data = await fetchModelSettings();
+  modelSettingsCache = { data, at: Date.now() };
+  return data;
 }
 
 export async function saveModelSettings(input: {
   imageModelId: string;
   videoModelId: string;
+  textModelId: string;
 }) {
+  modelSettingsCache = null;
   await db.$transaction([
     db.systemSetting.upsert({
       where: { key: SETTING_KEYS.defaultImageModel },
@@ -44,6 +65,11 @@ export async function saveModelSettings(input: {
       where: { key: SETTING_KEYS.defaultVideoModel },
       create: { key: SETTING_KEYS.defaultVideoModel, value: input.videoModelId },
       update: { value: input.videoModelId },
+    }),
+    db.systemSetting.upsert({
+      where: { key: SETTING_KEYS.defaultTextModel },
+      create: { key: SETTING_KEYS.defaultTextModel, value: input.textModelId },
+      update: { value: input.textModelId },
     }),
   ]);
 }

@@ -1,16 +1,19 @@
+import type { AspectRatio } from "@/server/ai-gateway/types";
 import { EphoneClient } from "./client";
-
-function resolveUrl(url: string): string {
-  if (url.startsWith("http") || url.startsWith("data:")) return url;
-  const base =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : "http://localhost:3000");
-  return `${base.replace(/\/$/, "")}${url.startsWith("/") ? url : `/${url}`}`;
-}
+import { resolveUrl } from "./resolve-url";
+import { ASPECT_RATIO_SIZE_MAP } from "./image-sizes";
 
 async function urlToFile(url: string, name: string): Promise<File> {
+  const tempMatch = url.match(/\/api\/temp-upload\/([^/]+)$/);
+  if (tempMatch) {
+    const { getTempUploadData } = await import("@/lib/temp-upload-store");
+    const entry = getTempUploadData(tempMatch[1]);
+    if (entry) {
+      return new File([new Uint8Array(entry.buffer)], name, { type: entry.mime || "image/png" });
+    }
+    throw new Error("参考图已过期，请重新上传");
+  }
+
   url = resolveUrl(url);
   if (url.startsWith("data:")) {
     const res = await fetch(url);
@@ -29,6 +32,7 @@ export async function runFusionImage(input: {
   printImageUrl: string;
   prompt: string;
   modelId?: string;
+  aspectRatio?: AspectRatio;
 }): Promise<{ url: string; revisedPrompt?: string }> {
   const apiKey = process.env.EPHONE_API_KEY;
   if (!apiKey) {
@@ -51,11 +55,13 @@ export async function runFusionImage(input: {
     input.prompt.trim() ||
     "将第二张图的印花图案自然融合到第一张图的底版服装上，保持底版版型、姿势与光照，印花清晰贴合面料纹理。";
 
+  const size = ASPECT_RATIO_SIZE_MAP[input.aspectRatio ?? "1:1"] ?? "1024x1024";
+
   const response = await openai.images.edit({
     model,
     image: [baseFile, printFile],
     prompt: fusionPrompt,
-    size: "1024x1024",
+    size,
     n: 1,
   });
 

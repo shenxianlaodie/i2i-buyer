@@ -12,6 +12,7 @@ export function useAdminModels() {
   return {
     imageModelId: data?.imageModelId ?? null,
     videoModelId: data?.videoModelId ?? null,
+    textModelId: data?.textModelId ?? null,
     isLoading,
   };
 }

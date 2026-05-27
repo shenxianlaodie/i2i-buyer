@@ -6,18 +6,9 @@ import type {
   VideoGenerationInput,
   VideoGenerationJob,
   VideoGenerationOutput,
-  AspectRatio,
 } from "../types";
 import { EphoneClient } from "./client";
-
-const SIZE_MAP: Record<AspectRatio, `${number}x${number}`> = {
-  "1:1": "1024x1024",
-  "16:9": "1792x1024",
-  "9:16": "1024x1792",
-  "4:3": "1024x768",
-  "3:4": "768x1024",
-  "21:9": "1792x768",
-};
+import { ASPECT_RATIO_SIZE_MAP } from "./image-sizes";
 
 async function urlToFile(url: string): Promise<File> {
   const res = await fetch(url);
@@ -39,7 +30,7 @@ export function createEphoneImageGateway(apiKey: string): ImageGenerationGateway
       });
 
       const startedAt = new Date();
-      const size = SIZE_MAP[input.aspectRatio ?? "1:1"] ?? "1024x1024";
+      const size = ASPECT_RATIO_SIZE_MAP[input.aspectRatio ?? "1:1"] ?? "1024x1024";
       if (!input.modelId) {
         throw new Error("请选择图片模型");
       }

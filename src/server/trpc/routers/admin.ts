@@ -222,6 +222,7 @@ export const adminRouter = router({
       z.object({
         imageModelId: z.string().min(1),
         videoModelId: z.string().min(1),
+        textModelId: z.string().min(1),
       }),
     )
     .mutation(async ({ input }) => {

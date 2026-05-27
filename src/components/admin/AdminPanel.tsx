@@ -62,6 +62,7 @@ export function AdminPanel() {
   );
   const [imageModelId, setImageModelId] = useState("");
   const [videoModelId, setVideoModelId] = useState("");
+  const [textModelId, setTextModelId] = useState("");
 
   const usersQuery = useQuery(
     trpc.admin.listUsers.queryOptions({ search: search || undefined }),
@@ -135,7 +136,7 @@ export function AdminPanel() {
     }),
   );
 
-  async function fetchModels(category: "image" | "video") {
+  async function fetchModels(category: "image" | "video" | "other") {
     const res = await fetch(`/api/ephone/models?category=${category}`);
     if (!res.ok) return [];
     return res.json() as Promise<{ id: string }[]>;
@@ -151,6 +152,11 @@ export function AdminPanel() {
     queryFn: () => fetchModels("video"),
     staleTime: 5 * 60 * 1000,
   });
+  const textModelsQuery = useQuery({
+    queryKey: ["ephone-models", "other"],
+    queryFn: () => fetchModels("other"),
+    staleTime: 5 * 60 * 1000,
+  });
 
   useEffect(() => {
     if (promptsQuery.data) {
@@ -164,6 +170,7 @@ export function AdminPanel() {
     if (modelSettingsQuery.data) {
       setImageModelId(modelSettingsQuery.data.imageModelId);
       setVideoModelId(modelSettingsQuery.data.videoModelId);
+      setTextModelId(modelSettingsQuery.data.textModelId);
     }
   }, [modelSettingsQuery.data]);
 
@@ -411,10 +418,35 @@ export function AdminPanel() {
                 )}
               </div>
 
+              <div>
+                <label className="text-xs text-muted-foreground">
+                  默认文本模型（商品文案 / 翻译）
+                </label>
+                {textModelsQuery.isLoading ? (
+                  <p className="text-xs text-muted-foreground">加载中…</p>
+                ) : (
+                  <Select
+                    value={textModelId}
+                    onValueChange={(v) => v && setTextModelId(v)}
+                  >
+                    <SelectTrigger className="mt-1 h-9 w-full">
+                      <SelectValue placeholder="选择文本模型" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(textModelsQuery.data ?? []).map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.id}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
               <Button
                 disabled={saveModels.isPending}
                 onClick={() =>
-                  saveModels.mutate({ imageModelId, videoModelId })
+                  saveModels.mutate({ imageModelId, videoModelId, textModelId })
                 }
               >
                 保存模型配置

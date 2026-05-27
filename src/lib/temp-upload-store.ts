@@ -38,3 +38,15 @@ export function getTempUpload(
   }
   return entry;
 }
+
+export function getTempUploadData(
+  id: string,
+): { buffer: Buffer; mime: string } | null {
+  const entry = store.get(id);
+  if (!entry) return null;
+  if (Date.now() - entry.createdAt > TTL_MS) {
+    store.delete(id);
+    return null;
+  }
+  return { buffer: entry.buffer, mime: entry.mime };
+}

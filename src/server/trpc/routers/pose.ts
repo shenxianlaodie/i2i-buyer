@@ -234,6 +234,7 @@ export const poseRouter = router({
         poses: z.array(poseTypeEnum).optional(),
         sourceImageUrl: z.string().min(1),
         modelId: z.string().min(1),
+        aspectRatio: z.string().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -274,7 +275,7 @@ export const poseRouter = router({
             modelId: input.modelId,
             status: "PENDING",
             prompt: `pose:${poseType}`,
-            params: { sourceImageUrl: sourceUrl, poseType },
+            params: { sourceImageUrl: sourceUrl, poseType, ...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}) },
             poseBatchId: row.batchId,
             poseRowId: row.id,
             poseType,
@@ -297,6 +298,7 @@ export const poseRouter = router({
         poseType: poseTypeEnum,
         sourceImageUrl: z.string().min(1),
         modelId: z.string().min(1),
+        aspectRatio: z.string().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -316,6 +318,7 @@ export const poseRouter = router({
           params: {
             sourceImageUrl: input.sourceImageUrl.trim(),
             poseType: input.poseType,
+            ...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}),
           },
           poseBatchId: row.batchId,
           poseRowId: row.id,

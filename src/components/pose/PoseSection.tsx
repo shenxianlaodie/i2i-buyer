@@ -1,7 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTRPC } from "@/server/trpc/client";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -9,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { History } from "lucide-react";
+import { History, RefreshCw, Eye } from "lucide-react";
 import { POSE_TYPES, type PoseType } from "@/lib/pose-types";
 import { AdaptiveImage } from "@/components/ui/adaptive-image";
 
@@ -32,10 +38,18 @@ function displayUrl(output?: PoseOutputData) {
 export function PoseSection({
   sourceUrl,
   poseOutputs,
+  rowId,
+  modelId,
+  regeneratingPose,
+  onRegeneratePose,
   onRefresh,
 }: {
   sourceUrl: string;
   poseOutputs: PoseOutputData[];
+  rowId: string;
+  modelId: string;
+  regeneratingPose: PoseType | null;
+  onRegeneratePose: (pose: PoseType) => void;
   onRefresh: () => void;
 }) {
   const trpc = useTRPC();
@@ -43,6 +57,8 @@ export function PoseSection({
   const setActiveVersion = useMutation(
     trpc.pose.setActivePoseVersion.mutationOptions(),
   );
+
+  const [zoomUrl, setZoomUrl] = useState<string | null>(null);
 
   const outputByPose = Object.fromEntries(
     poseOutputs.map((o) => [o.poseType, o]),
@@ -66,8 +82,35 @@ export function PoseSection({
         return (
           <div key={pose} className="space-y-0.5">
             {url ? (
-              <div className="min-h-28 flex items-center">
+              <div className="min-h-28 flex items-center relative group">
                 <AdaptiveImage src={url} maxHeightClass="max-h-28" className="w-full" />
+                <div className="absolute top-0.5 right-0.5 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="h-5 w-5 p-0 bg-background/80 hover:bg-background"
+                    title="放大查看"
+                    onClick={() => setZoomUrl(url)}
+                  >
+                    <Eye className="size-2.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="h-5 w-5 p-0 bg-background/80 hover:bg-background"
+                    disabled={!hasSource || regeneratingPose !== null}
+                    title="重新生成"
+                    onClick={() => onRegeneratePose(pose)}
+                  >
+                    {regeneratingPose === pose ? (
+                      <RefreshCw className="size-2.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="size-2.5" />
+                    )}
+                  </Button>
+                </div>
               </div>
             ) : (
               <div className="h-28 rounded border border-dashed flex items-center justify-center text-[9px] text-muted-foreground">
@@ -110,6 +153,17 @@ export function PoseSection({
         );
       })}
       </div>
+      <Dialog open={!!zoomUrl} onOpenChange={(open) => !open && setZoomUrl(null)}>
+        <DialogContent className="max-w-[90vw] max-h-[90vh] p-2 bg-black/90 border-none">
+          {zoomUrl && (
+            <img
+              src={zoomUrl}
+              alt="预览"
+              className="max-w-full max-h-[85vh] object-contain mx-auto"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

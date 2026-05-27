@@ -1,33 +1,40 @@
 import { EphoneClient } from "./client";
-import { getPromptSettings } from "@/lib/system-settings";
+import { resolveUrl } from "./resolve-url";
+import { getPromptSettings, getModelSettings } from "@/lib/system-settings";
 
-function resolveUrl(url: string): string {
-  if (url.startsWith("http") || url.startsWith("data:")) return url;
-  const base =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : "http://localhost:3000");
-  return `${base.replace(/\/$/, "")}${url.startsWith("/") ? url : `/${url}`}`;
+async function textModel(): Promise<string> {
+  const { textModelId } = await getModelSettings();
+  return textModelId;
 }
 
-function textModel() {
-  return process.env.EPHONE_TEXT_MODEL ?? "gpt-4o-mini";
+async function resolveImageUrl(url: string): Promise<string> {
+  const tempMatch = url.match(/\/api\/temp-upload\/([^/]+)$/);
+  if (tempMatch) {
+    const { getTempUploadData } = await import("@/lib/temp-upload-store");
+    const entry = getTempUploadData(tempMatch[1]);
+    if (entry) {
+      const b64 = entry.buffer.toString("base64");
+      return `data:${entry.mime || "image/png"};base64,${b64}`;
+    }
+    throw new Error("参考图已过期，请重新上传");
+  }
+  return resolveUrl(url);
+}
+
+async function createOpenAI() {
+  const apiKey = process.env.EPHONE_API_KEY;
+  if (!apiKey) throw new Error("请配置 EPHONE_API_KEY");
+  const ephone = new EphoneClient(apiKey);
+  const OpenAI = (await import("openai")).default;
+  return new OpenAI({ apiKey, baseURL: ephone.openaiBaseUrl });
 }
 
 async function visionText(imageUrl: string, instruction: string): Promise<string> {
-  const apiKey = process.env.EPHONE_API_KEY;
-  if (!apiKey) throw new Error("请配置 EPHONE_API_KEY");
-
-  const ephone = new EphoneClient(apiKey);
-  const OpenAI = (await import("openai")).default;
-  const openai = new OpenAI({
-    apiKey,
-    baseURL: ephone.openaiBaseUrl,
-  });
+  const openai = await createOpenAI();
+  const resolved = await resolveImageUrl(imageUrl);
 
   const response = await openai.chat.completions.create({
-    model: textModel(),
+    model: await textModel(),
     messages: [
       {
         role: "user",
@@ -38,7 +45,7 @@ async function visionText(imageUrl: string, instruction: string): Promise<string
           },
           {
             type: "image_url",
-            image_url: { url: resolveUrl(imageUrl) },
+            image_url: { url: resolved },
           },
         ],
       },
@@ -63,18 +70,10 @@ export async function generateProductDescription(sourceImageUrl: string) {
 
 export async function translateZhToEn(text: string): Promise<string> {
   if (!text.trim()) throw new Error("内容为空");
-  const apiKey = process.env.EPHONE_API_KEY;
-  if (!apiKey) throw new Error("请配置 EPHONE_API_KEY");
-
-  const ephone = new EphoneClient(apiKey);
-  const OpenAI = (await import("openai")).default;
-  const openai = new OpenAI({
-    apiKey,
-    baseURL: ephone.openaiBaseUrl,
-  });
+  const openai = await createOpenAI();
 
   const response = await openai.chat.completions.create({
-    model: textModel(),
+    model: await textModel(),
     messages: [
       {
         role: "system",

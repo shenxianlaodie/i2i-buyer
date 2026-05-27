@@ -292,25 +292,23 @@ export const fusionRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const batch = await db.fusionBatch.findFirst({
-        where: { id: input.batchId, userId: ctx.userId },
-        include: { rows: { orderBy: { sortOrder: "asc" } } },
+      const fromRow = await db.fusionRow.findFirst({
+        where: {
+          id: input.fromRowId,
+          batch: { id: input.batchId, userId: ctx.userId },
+        },
+        select: { prompt: true, sortOrder: true },
       });
-      if (!batch) throw new TRPCError({ code: "NOT_FOUND" });
+      if (!fromRow) throw new TRPCError({ code: "NOT_FOUND" });
 
-      const fromIdx = batch.rows.findIndex((r) => r.id === input.fromRowId);
-      if (fromIdx < 0) throw new TRPCError({ code: "NOT_FOUND" });
-      const prompt = batch.rows[fromIdx].prompt;
-      const toUpdate = batch.rows.slice(fromIdx + 1);
-      await Promise.all(
-        toUpdate.map((r) =>
-          db.fusionRow.update({
-            where: { id: r.id },
-            data: { prompt },
-          }),
-        ),
-      );
-      return { updated: toUpdate.length };
+      const result = await db.fusionRow.updateMany({
+        where: {
+          batchId: input.batchId,
+          sortOrder: { gt: fromRow.sortOrder },
+        },
+        data: { prompt: fromRow.prompt },
+      });
+      return { updated: result.count };
     }),
 
   generate: protectedProcedure
@@ -320,6 +318,7 @@ export const fusionRouter = router({
         modelId: z.string().min(1),
         baseImageUrl: z.string().min(1),
         printImageUrl: z.string().min(1),
+        aspectRatio: z.string().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -339,6 +338,7 @@ export const fusionRouter = router({
           params: {
             baseImageUrl: input.baseImageUrl.trim(),
             printImageUrl: input.printImageUrl.trim(),
+            ...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}),
           },
           fusionBatchId: row.batchId,
           fusionRowId: row.id,

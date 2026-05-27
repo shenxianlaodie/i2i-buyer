@@ -77,6 +77,7 @@ async function runFusionGeneration(generationId: string) {
   const params = (gen.params as Record<string, unknown>) ?? {};
   const baseImageUrl = params.baseImageUrl as string;
   const printImageUrl = params.printImageUrl as string;
+  const aspectRatio = params.aspectRatio as string | undefined;
   const rowId = gen.fusionRowId!;
 
   if (!baseImageUrl || !printImageUrl) {
@@ -94,6 +95,7 @@ async function runFusionGeneration(generationId: string) {
       printImageUrl,
       prompt: gen.prompt,
       modelId: gen.modelId,
+      aspectRatio: aspectRatio as import("@/server/ai-gateway/types").AspectRatio | undefined,
     });
 
     const version = await db.fusionVersion.create({
@@ -141,6 +143,7 @@ async function runPoseGeneration(generationId: string) {
   const params = (gen.params as Record<string, unknown>) ?? {};
   const sourceImageUrl = params.sourceImageUrl as string;
   const poseType = params.poseType as string;
+  const aspectRatio = params.aspectRatio as string | undefined;
   const rowId = gen.poseRowId!;
 
   if (!sourceImageUrl || !poseType) {
@@ -157,6 +160,7 @@ async function runPoseGeneration(generationId: string) {
       sourceImageUrl,
       poseType: poseType as import("@/lib/pose-types").PoseType,
       modelId: gen.modelId,
+      aspectRatio: aspectRatio as import("@/server/ai-gateway/types").AspectRatio | undefined,
     });
 
     const slot = await db.poseOutput.upsert({
