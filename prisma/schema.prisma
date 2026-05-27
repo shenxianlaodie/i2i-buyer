@@ -1,0 +1,421 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Auth (NextAuth.js v5 / Auth.js) ──────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  role          String    @default("USER")
+  disabled      Boolean   @default(false)
+  password      String?
+  credits       Int       @default(100)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  projects      Project[]
+  generations   Generation[]
+  collections   Collection[]
+  workflows     Workflow[]
+  creditTxs     CreditTransaction[]
+  apiKeys       ApiKey[]
+  assets        Asset[]
+  fusionBatches FusionBatch[]
+  poseBatches   PoseBatch[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ── API Keys ─────────────────────────────────────────────
+
+model ApiKey {
+  id         String   @id @default(cuid())
+  userId     String
+  name       String
+  provider   String
+  keyHash    String
+  lastUsedAt DateTime?
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+}
+
+// ── Projects ─────────────────────────────────────────────
+
+model Project {
+  id          String       @id @default(cuid())
+  userId      String
+  title       String
+  description String?      @db.Text
+  thumbnail   String?
+  settings    Json         @default("{}")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  generations Generation[]
+  assets      Asset[]
+
+  @@index([userId])
+}
+
+// ── Generations ──────────────────────────────────────────
+
+model Generation {
+  id             String   @id @default(cuid())
+  userId         String
+  projectId      String?
+  type           String   // IMAGE | VIDEO
+  provider       String   // REPLICATE | FALAI | OPENAI | RUNWAY | PIKA | KLING
+  modelId        String
+  status         String   @default("PENDING") // PENDING | QUEUED | PROCESSING | COMPLETED | FAILED | CANCELLED
+
+  prompt         String   @db.Text
+  negativePrompt String?  @db.Text
+  params         Json     @default("{}")
+  referenceImage String?
+
+  fusionBatchId  String?
+  poseBatchId    String?
+  fusionRowId    String?
+  poseRowId      String?
+  poseType       String?
+  inputSnapshot  Json?
+
+  outputUrls     String[]
+  outputData     Json?
+  errorMessage   String?  @db.Text
+
+  startedAt      DateTime?
+  completedAt    DateTime?
+  duration       Int?
+
+  creditCost     Int      @default(0)
+  providerCost   Float?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project        Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  assets         Asset[]
+
+  @@index([userId, status])
+  @@index([userId, type])
+  @@index([status])
+  @@index([fusionBatchId])
+  @@index([poseBatchId])
+  @@index([userId, createdAt])
+}
+
+// ── Assets ───────────────────────────────────────────────
+
+model Asset {
+  id            String             @id @default(cuid())
+  userId        String
+  projectId     String?
+  generationId  String?
+  type          String             // IMAGE | VIDEO
+  filename      String
+  originalUrl   String
+  cdnUrl        String?
+  thumbnailUrl  String?
+  width         Int?
+  height        Int?
+  duration      Float?
+  sizeBytes     Int?
+  mimeType      String
+  metadata      Json               @default("{}")
+  tags          String[]
+  isFavorite    Boolean            @default(false)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project       Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  generation    Generation?        @relation(fields: [generationId], references: [id], onDelete: SetNull)
+  collections   CollectionAsset[]
+
+  @@index([userId, type])
+  @@index([userId, isFavorite])
+}
+
+// ── Collections ──────────────────────────────────────────
+
+model Collection {
+  id          String            @id @default(cuid())
+  userId      String
+  name        String
+  description String?           @db.Text
+  coverAsset  String?
+  sortOrder   Int               @default(0)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assets      CollectionAsset[]
+
+  @@index([userId])
+}
+
+model CollectionAsset {
+  id           String     @id @default(cuid())
+  collectionId String
+  assetId      String
+  sortOrder    Int        @default(0)
+  addedAt      DateTime   @default(now())
+
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  asset        Asset      @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, assetId])
+}
+
+// ── Workflows ────────────────────────────────────────────
+
+model Workflow {
+  id          String          @id @default(cuid())
+  userId      String
+  name        String
+  description String?         @db.Text
+  nluHint     String          @db.Text
+  isPublic    Boolean         @default(false)
+  useCount    Int             @default(0)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  steps       WorkflowStep[]
+
+  @@index([userId])
+  @@index([isPublic])
+}
+
+model WorkflowStep {
+  id          String   @id @default(cuid())
+  workflowId  String
+  index       Int
+  type        String   // GENERATE_IMAGE | GENERATE_VIDEO | EDIT_IMAGE | UPSCALE | REMOVE_BG | ENHANCE_PROMPT | GENERATE_AUDIO
+  provider    String?
+  modelId     String?
+  config      Json     @default("{}")
+  promptHint  String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workflow    Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@unique([workflowId, index])
+}
+
+// ── Credits ──────────────────────────────────────────────
+
+model CreditTransaction {
+  id           String   @id @default(cuid())
+  userId       String
+  amount       Int
+  balance      Int
+  type         String   // GRANT | CONSUME | REFUND | PURCHASE | BONUS
+  generationId String?
+  description  String?
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+// ── Fusion Image ─────────────────────────────────────────
+
+model FusionBatch {
+  id        String      @id @default(cuid())
+  userId    String
+  title     String      @default("融合图任务")
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  user User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rows FusionRow[]
+
+  @@index([userId])
+}
+
+model FusionRow {
+  id              String          @id @default(cuid())
+  batchId         String
+  sortOrder       Int             @default(0)
+  prompt          String          @default("") @db.Text
+  remark          String?         @db.Text
+  activeVersionId   String?
+  baseGroupAnchorId String?
+  baseGroupSize     Int?
+  poseSelection     String[]        @default(["front_full", "back_full", "right_upper", "front_upper"])
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  batch       FusionBatch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  versions    FusionVersion[]
+  poseOutputs FusionPoseOutput[]
+
+  @@index([batchId])
+  @@index([baseGroupAnchorId])
+}
+
+model FusionPoseOutput {
+  id           String   @id @default(cuid())
+  rowId        String
+  poseType     String
+  outputUrl    String   @default("")
+  generationId String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  row FusionRow @relation(fields: [rowId], references: [id], onDelete: Cascade)
+
+  @@unique([rowId, poseType])
+  @@index([rowId])
+}
+
+model FusionVersion {
+  id           String   @id @default(cuid())
+  rowId        String
+  prompt       String   @db.Text
+  outputUrl    String
+  generationId String?
+  createdAt    DateTime @default(now())
+
+  row FusionRow @relation(fields: [rowId], references: [id], onDelete: Cascade)
+
+  @@index([rowId, createdAt])
+}
+
+// ── Multi Pose ───────────────────────────────────────────
+
+model PoseBatch {
+  id        String    @id @default(cuid())
+  userId    String
+  title     String    @default("多姿势任务")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rows PoseRow[]
+
+  @@index([userId])
+}
+
+model PoseRow {
+  id              String   @id @default(cuid())
+  batchId         String
+  sortOrder       Int      @default(0)
+  poseSelection       String[] @default(["front_full", "back_full", "right_upper", "front_upper"])
+  productTitle        String?  @db.Text
+  productDescription  String?  @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  batch   PoseBatch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  outputs PoseOutput[]
+
+  @@index([batchId])
+}
+
+model PoseOutput {
+  id              String   @id @default(cuid())
+  rowId           String
+  poseType        String
+  outputUrl       String   @default("")
+  activeVersionId String?
+  generationId    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  row      PoseRow             @relation(fields: [rowId], references: [id], onDelete: Cascade)
+  versions PoseOutputVersion[]
+
+  @@unique([rowId, poseType])
+  @@index([rowId])
+}
+
+model PoseOutputVersion {
+  id           String   @id @default(cuid())
+  outputId     String
+  outputUrl    String
+  generationId String?
+  createdAt    DateTime @default(now())
+
+  output PoseOutput @relation(fields: [outputId], references: [id], onDelete: Cascade)
+
+  @@index([outputId, createdAt])
+}
+
+// ── System Settings ──────────────────────────────────────
+
+model SystemSetting {
+  key       String   @id
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+}
+
+// ── Prompt Cache ─────────────────────────────────────────
+
+model PromptCache {
+  id          String   @id @default(cuid())
+  promptHash  String   @unique
+  prompt      String   @db.Text
+  modelId     String
+  params      Json     @default("{}")
+  resultUrls  String[]
+  resultData  Json?
+  hitCount    Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([promptHash])
+}

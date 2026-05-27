@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:labs.google)",
+      "WebSearch",
+      "Bash(npm --version)",
+      "Bash(npx --version)",
+      "Bash(docker --version)",
+      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --no-git --turbopack)",
+      "Bash(npm install *)",
+      "Bash(npx shadcn@latest init -d --force)",
+      "Bash(npx shadcn@latest add button dialog dropdown-menu sheet tabs card input textarea select slider switch tooltip badge avatar separator scroll-area toast sonner -y)",
+      "Bash(npx shadcn@latest add button dialog dropdown-menu sheet tabs card input textarea select slider switch tooltip badge avatar separator scroll-area sonner -y)",
+      "Bash(npx tsc *)",
+      "Bash(npx prisma *)",
+      "Bash(npx shadcn@latest add label -y)",
+      "Bash(npm ls *)",
+      "Bash(node -e \"const i = require\\('inngest'\\); const c = new i.Inngest\\({id:'test'}\\); console.log\\(typeof c.createFunction\\); console.log\\(c.createFunction.toString\\(\\).substring\\(0, 500\\)\\)\")",
+      "Bash(npx next *)",
+      "Bash(npx auth *)",
+      "Bash(node -e \"console.log\\(require\\('crypto'\\).randomBytes\\(32\\).toString\\('base64'\\)\\)\")",
+      "Bash(echo 'DATABASE_URL=\"postgresql://xiangqianxi06:Xxq411381@pgm-bp1wh770x766jc896o.pg.rds.aliyuncs.com:5432/i2i-buyer\"')",
+      "Bash(npm run *)",
+      "Bash(npx tsx *)",
+      "Bash(taskkill /PID 69016 /F)",
+      "Bash(netstat -ano)",
+      "Bash(cmd *)",
+      "Bash(powershell -Command \"Stop-Process -Id 69016 -Force\")"
+    ]
+  }
+}
