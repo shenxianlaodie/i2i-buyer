@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { GalleryHorizontalEnd } from "lucide-react";
 import { LoginForm } from "@/components/auth/LoginForm";
 
@@ -11,7 +12,9 @@ export default function LoginPage() {
           </div>
           i2i Studio
         </a>
-        <LoginForm />
+        <Suspense fallback={<div className="text-center text-sm text-muted-foreground">加载中...</div>}>
+          <LoginForm />
+        </Suspense>
       </div>
     </div>
   );

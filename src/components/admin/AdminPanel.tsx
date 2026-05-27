@@ -13,6 +13,13 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Card } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
@@ -53,6 +60,8 @@ export function AdminPanel() {
   const [productDescription, setProductDescription] = useState(
     defaults.productDescription,
   );
+  const [imageModelId, setImageModelId] = useState("");
+  const [videoModelId, setVideoModelId] = useState("");
 
   const usersQuery = useQuery(
     trpc.admin.listUsers.queryOptions({ search: search || undefined }),
@@ -111,6 +120,38 @@ export function AdminPanel() {
     }),
   );
 
+  const modelSettingsQuery = useQuery(
+    trpc.admin.getModelSettings.queryOptions(),
+  );
+  const saveModels = useMutation(
+    trpc.admin.updateModelSettings.mutationOptions({
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: trpc.admin.getModelSettings.queryKey(),
+        });
+        toast.success("模型配置已保存");
+      },
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
+  async function fetchModels(category: "image" | "video") {
+    const res = await fetch(`/api/ephone/models?category=${category}`);
+    if (!res.ok) return [];
+    return res.json() as Promise<{ id: string }[]>;
+  }
+
+  const imageModelsQuery = useQuery({
+    queryKey: ["ephone-models", "image"],
+    queryFn: () => fetchModels("image"),
+    staleTime: 5 * 60 * 1000,
+  });
+  const videoModelsQuery = useQuery({
+    queryKey: ["ephone-models", "video"],
+    queryFn: () => fetchModels("video"),
+    staleTime: 5 * 60 * 1000,
+  });
+
   useEffect(() => {
     if (promptsQuery.data) {
       setPosePrompts(promptsQuery.data.pose);
@@ -118,6 +159,13 @@ export function AdminPanel() {
       setProductDescription(promptsQuery.data.productDescription);
     }
   }, [promptsQuery.data]);
+
+  useEffect(() => {
+    if (modelSettingsQuery.data) {
+      setImageModelId(modelSettingsQuery.data.imageModelId);
+      setVideoModelId(modelSettingsQuery.data.videoModelId);
+    }
+  }, [modelSettingsQuery.data]);
 
   const users = (usersQuery.data ?? []) as UserRow[];
   const selectedUser = users.find((u) => u.id === selectedUserId);
@@ -135,6 +183,7 @@ export function AdminPanel() {
         <TabsList className="mx-4 mt-4 w-fit">
           <TabsTrigger value="users">用户管理</TabsTrigger>
           <TabsTrigger value="prompts">提示词配置</TabsTrigger>
+          <TabsTrigger value="models">模型配置</TabsTrigger>
         </TabsList>
 
         <TabsContent value="users" className="flex-1 overflow-auto p-4 mt-0">
@@ -299,6 +348,78 @@ export function AdminPanel() {
               >
                 保存提示词
               </Button>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="models" className="flex-1 overflow-auto p-4 mt-0">
+          <div className="max-w-3xl space-y-6">
+            <Card className="p-4 space-y-4">
+              <div>
+                <h2 className="text-sm font-medium">默认模型</h2>
+                <p className="text-xs text-muted-foreground mt-1">
+                  设置后将应用到所有用户的生成任务中，用户端不再显示模型选择器。
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs text-muted-foreground">
+                  默认图片模型
+                </label>
+                {imageModelsQuery.isLoading ? (
+                  <p className="text-xs text-muted-foreground">加载中…</p>
+                ) : (
+                  <Select
+                    value={imageModelId}
+                    onValueChange={(v) => v && setImageModelId(v)}
+                  >
+                    <SelectTrigger className="mt-1 h-9 w-full">
+                      <SelectValue placeholder="选择图片模型" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(imageModelsQuery.data ?? []).map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.id}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
+              <div>
+                <label className="text-xs text-muted-foreground">
+                  默认视频模型
+                </label>
+                {videoModelsQuery.isLoading ? (
+                  <p className="text-xs text-muted-foreground">加载中…</p>
+                ) : (
+                  <Select
+                    value={videoModelId}
+                    onValueChange={(v) => v && setVideoModelId(v)}
+                  >
+                    <SelectTrigger className="mt-1 h-9 w-full">
+                      <SelectValue placeholder="选择视频模型" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(videoModelsQuery.data ?? []).map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.id}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
+              <Button
+                disabled={saveModels.isPending}
+                onClick={() =>
+                  saveModels.mutate({ imageModelId, videoModelId })
+                }
+              >
+                保存模型配置
+              </Button>
+            </Card>
           </div>
         </TabsContent>
       </Tabs>

@@ -2,24 +2,18 @@ import { z } from "zod";
 import { router, protectedProcedure } from "@/server/trpc/init";
 import { db } from "@/lib/db";
 import { TRPCError } from "@trpc/server";
-import { runPoseImage } from "@/server/ai-gateway/ephone/pose";
 import {
   generateProductTitle,
   generateProductDescription,
   translateZhToEn,
 } from "@/server/ai-gateway/ephone/product-copy";
-import {
-  checkBalance,
-  reserveCredits,
-  refundCredits,
-  getCreditCost,
-} from "@/lib/credits";
+import { reserveCredits, getCreditCost } from "@/lib/credits";
+import { enqueueImage } from "@/server/ai-gateway/worker";
 import {
   POSE_TYPES,
   type PoseType,
   DEFAULT_POSE_SELECTION,
 } from "@/lib/pose-types";
-import { createGenerationAuditData } from "@/lib/generation-record";
 
 const poseTypeEnum = z.enum(POSE_TYPES);
 
@@ -30,37 +24,6 @@ const poseOutputsInclude = {
     },
   },
 } as const;
-
-async function appendPoseOutputVersion(
-  rowId: string,
-  poseType: string,
-  outputUrl: string,
-  generationId: string,
-) {
-  const slot = await db.poseOutput.upsert({
-    where: { rowId_poseType: { rowId, poseType } },
-    create: { rowId, poseType },
-    update: {},
-  });
-
-  const version = await db.poseOutputVersion.create({
-    data: {
-      outputId: slot.id,
-      outputUrl,
-      generationId,
-    },
-  });
-
-  return db.poseOutput.update({
-    where: { id: slot.id },
-    data: {
-      outputUrl,
-      generationId,
-      activeVersionId: version.id,
-    },
-    include: { versions: { orderBy: { createdAt: "desc" } } },
-  });
-}
 
 async function getPoseBatchForUser(userId: string, batchId?: string) {
   if (batchId) {
@@ -300,82 +263,31 @@ export const poseRouter = router({
         });
       }
 
-      const totalCost = getCreditCost(input.modelId) * poses.length;
-      const user = await db.user.findUnique({ where: { id: ctx.userId } });
-      if (!user || user.credits < totalCost) {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: `积分不足：需要 ${totalCost}，当前 ${user?.credits ?? 0}`,
-        });
-      }
-
-      const results: { poseType: PoseType; outputUrl: string }[] = [];
+      const generationIds: string[] = [];
 
       for (const poseType of poses) {
         const generation = await db.generation.create({
-          data: createGenerationAuditData({
+          data: {
             userId: ctx.userId,
+            type: "IMAGE",
+            provider: "EPHONE",
             modelId: input.modelId,
+            status: "PENDING",
             prompt: `pose:${poseType}`,
-            creditCost: getCreditCost(input.modelId),
+            params: { sourceImageUrl: sourceUrl, poseType },
+            poseBatchId: row.batchId,
+            poseRowId: row.id,
             poseType,
-            snapshot: {
-              kind: "pose",
-              batchId: row.batchId,
-              rowId: row.id,
-              poseType,
-              hasSource: true,
-            },
-          }),
+            creditCost: getCreditCost(input.modelId),
+          },
         });
 
         await reserveCredits(ctx.userId, generation.id, input.modelId);
-
-        try {
-          const result = await runPoseImage({
-            sourceImageUrl: sourceUrl,
-            poseType,
-            modelId: input.modelId,
-          });
-
-          await appendPoseOutputVersion(
-            row.id,
-            poseType,
-            result.url,
-            generation.id,
-          );
-
-          await db.generation.update({
-            where: { id: generation.id },
-            data: {
-              status: "COMPLETED",
-              completedAt: new Date(),
-              outputUrls: [result.url],
-            },
-          });
-
-          results.push({ poseType, outputUrl: result.url });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : "生成失败";
-          await db.generation.update({
-            where: { id: generation.id },
-            data: {
-              status: "FAILED",
-              errorMessage: message,
-              completedAt: new Date(),
-            },
-          });
-          await refundCredits(ctx.userId, generation.id);
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message });
-        }
+        enqueueImage(generation.id);
+        generationIds.push(generation.id);
       }
 
-      await db.poseBatch.update({
-        where: { id: row.batchId },
-        data: { updatedAt: new Date() },
-      });
-
-      return { results, sourceUrl };
+      return { generationIds, rowId: row.id };
     }),
 
   regeneratePose: protectedProcedure
@@ -393,77 +305,28 @@ export const poseRouter = router({
       });
       if (!row) throw new TRPCError({ code: "NOT_FOUND" });
 
-      const sourceUrl = input.sourceImageUrl.trim();
-
-      const balance = await checkBalance(ctx.userId, input.modelId);
-      if (!balance.ok) {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: `积分不足：需要 ${balance.required}，当前 ${balance.current}`,
-        });
-      }
-
       const generation = await db.generation.create({
-        data: createGenerationAuditData({
+        data: {
           userId: ctx.userId,
+          type: "IMAGE",
+          provider: "EPHONE",
           modelId: input.modelId,
+          status: "PENDING",
           prompt: `pose:${input.poseType}`,
-          creditCost: getCreditCost(input.modelId),
-          poseType: input.poseType,
-          snapshot: {
-            kind: "pose",
-            batchId: row.batchId,
-            rowId: row.id,
+          params: {
+            sourceImageUrl: input.sourceImageUrl.trim(),
             poseType: input.poseType,
-            hasSource: true,
           },
-        }),
+          poseBatchId: row.batchId,
+          poseRowId: row.id,
+          poseType: input.poseType,
+          creditCost: getCreditCost(input.modelId),
+        },
       });
 
       await reserveCredits(ctx.userId, generation.id, input.modelId);
-
-      try {
-        const result = await runPoseImage({
-          sourceImageUrl: sourceUrl,
-          poseType: input.poseType,
-          modelId: input.modelId,
-        });
-
-        const output = await appendPoseOutputVersion(
-          row.id,
-          input.poseType,
-          result.url,
-          generation.id,
-        );
-
-        await db.generation.update({
-          where: { id: generation.id },
-          data: {
-            status: "COMPLETED",
-            completedAt: new Date(),
-            outputUrls: [result.url],
-          },
-        });
-
-        await db.poseBatch.update({
-          where: { id: row.batchId },
-          data: { updatedAt: new Date() },
-        });
-
-        return { poseType: input.poseType, outputUrl: result.url, output };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "生成失败";
-        await db.generation.update({
-          where: { id: generation.id },
-          data: {
-            status: "FAILED",
-            errorMessage: message,
-            completedAt: new Date(),
-          },
-        });
-        await refundCredits(ctx.userId, generation.id);
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message });
-      }
+      enqueueImage(generation.id);
+      return { generationId: generation.id, rowId: row.id };
     }),
 
   generateProductCopy: protectedProcedure

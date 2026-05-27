@@ -6,6 +6,7 @@ import { creditRouter } from "./credits";
 import { fusionRouter } from "./fusion";
 import { poseRouter } from "./pose";
 import { adminRouter } from "./admin";
+import { canvasRouter } from "./canvas";
 
 export const appRouter = router({
   generation: generationRouter,
@@ -15,6 +16,7 @@ export const appRouter = router({
   fusion: fusionRouter,
   pose: poseRouter,
   admin: adminRouter,
+  canvas: canvasRouter,
 });
 
 export type AppRouter = typeof appRouter;

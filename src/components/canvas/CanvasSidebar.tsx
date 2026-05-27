@@ -53,9 +53,13 @@ export function CanvasSidebar() {
         <button
           type="button"
           title={collapsed ? "回收站" : undefined}
+          onClick={() => setFilter("trash")}
           className={cn(
-            "flex w-full items-center rounded-lg text-sm text-zinc-500 hover:text-zinc-300",
+            "flex w-full items-center rounded-lg text-sm transition-colors",
             collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2.5",
+            filter === "trash"
+              ? "bg-zinc-800 text-white"
+              : "text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300",
           )}
         >
           <Trash2 className="size-4 shrink-0" />

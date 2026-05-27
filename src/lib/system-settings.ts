@@ -8,7 +8,45 @@ export const SETTING_KEYS = {
   pose: (pose: PoseType) => `pose_prompt_${pose}`,
   productTitle: "product_title_prompt",
   productDescription: "product_description_prompt",
+  defaultImageModel: "default_image_model",
+  defaultVideoModel: "default_video_model",
 } as const;
+
+const FALLBACK_IMAGE_MODEL = "gpt-image-1";
+const FALLBACK_VIDEO_MODEL = "kling-v1-6/image-to-video";
+
+export async function getModelSettings() {
+  const rows = await db.systemSetting.findMany({
+    where: {
+      key: {
+        in: [SETTING_KEYS.defaultImageModel, SETTING_KEYS.defaultVideoModel],
+      },
+    },
+  });
+  const map = new Map(rows.map((r) => [r.key, r.value]));
+  return {
+    imageModelId: map.get(SETTING_KEYS.defaultImageModel) ?? FALLBACK_IMAGE_MODEL,
+    videoModelId: map.get(SETTING_KEYS.defaultVideoModel) ?? FALLBACK_VIDEO_MODEL,
+  };
+}
+
+export async function saveModelSettings(input: {
+  imageModelId: string;
+  videoModelId: string;
+}) {
+  await db.$transaction([
+    db.systemSetting.upsert({
+      where: { key: SETTING_KEYS.defaultImageModel },
+      create: { key: SETTING_KEYS.defaultImageModel, value: input.imageModelId },
+      update: { value: input.imageModelId },
+    }),
+    db.systemSetting.upsert({
+      where: { key: SETTING_KEYS.defaultVideoModel },
+      create: { key: SETTING_KEYS.defaultVideoModel, value: input.videoModelId },
+      update: { value: input.videoModelId },
+    }),
+  ]);
+}
 
 export async function getPromptSettings() {
   const defaults = getDefaultPromptSettings();

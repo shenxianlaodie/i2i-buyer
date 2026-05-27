@@ -2,9 +2,8 @@ import { z } from "zod";
 import { router, protectedProcedure } from "@/server/trpc/init";
 import { db } from "@/lib/db";
 import { TRPCError } from "@trpc/server";
-import { runFusionImage } from "@/server/ai-gateway/ephone/fusion";
-import { checkBalance, reserveCredits, refundCredits, getCreditCost } from "@/lib/credits";
-import { createGenerationAuditData } from "@/lib/generation-record";
+import { reserveCredits, getCreditCost } from "@/lib/credits";
+import { enqueueImage } from "@/server/ai-gateway/worker";
 
 async function getBatchForUser(userId: string, batchId?: string) {
   if (batchId) {
@@ -329,81 +328,27 @@ export const fusionRouter = router({
       });
       if (!row) throw new TRPCError({ code: "NOT_FOUND" });
 
-      const baseImageUrl = input.baseImageUrl.trim();
-      const printImageUrl = input.printImageUrl.trim();
-
-      const balance = await checkBalance(ctx.userId, input.modelId);
-      if (!balance.ok) {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: `积分不足：需要 ${balance.required}，当前 ${balance.current}`,
-        });
-      }
-
       const generation = await db.generation.create({
-        data: createGenerationAuditData({
+        data: {
           userId: ctx.userId,
+          type: "IMAGE",
+          provider: "EPHONE",
           modelId: input.modelId,
+          status: "PENDING",
           prompt: row.prompt,
-          creditCost: getCreditCost(input.modelId),
-          snapshot: {
-            kind: "fusion",
-            batchId: row.batchId,
-            rowId: row.id,
-            hasBase: true,
-            hasPrint: true,
+          params: {
+            baseImageUrl: input.baseImageUrl.trim(),
+            printImageUrl: input.printImageUrl.trim(),
           },
-        }),
+          fusionBatchId: row.batchId,
+          fusionRowId: row.id,
+          creditCost: getCreditCost(input.modelId),
+        },
       });
 
       await reserveCredits(ctx.userId, generation.id, input.modelId);
-
-      try {
-        const result = await runFusionImage({
-          baseImageUrl,
-          printImageUrl,
-          prompt: row.prompt,
-          modelId: input.modelId,
-        });
-
-        const version = await db.fusionVersion.create({
-          data: {
-            rowId: row.id,
-            prompt: row.prompt,
-            outputUrl: result.url,
-            generationId: generation.id,
-          },
-        });
-
-        await db.fusionRow.update({
-          where: { id: row.id },
-          data: { activeVersionId: version.id },
-        });
-
-        await db.generation.update({
-          where: { id: generation.id },
-          data: {
-            status: "COMPLETED",
-            completedAt: new Date(),
-            outputUrls: [result.url],
-          },
-        });
-
-        await db.fusionBatch.update({
-          where: { id: row.batchId },
-          data: { updatedAt: new Date() },
-        });
-
-        return { version, outputUrl: result.url };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "生成失败";
-        await db.generation.update({
-          where: { id: generation.id },
-          data: { status: "FAILED", errorMessage: message, completedAt: new Date() },
-        });
-        await refundCredits(ctx.userId, generation.id);
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message });
-      }
+      enqueueImage(generation.id);
+      return { generationId: generation.id, rowId: row.id };
     }),
 
   setActiveVersion: protectedProcedure

@@ -17,7 +17,7 @@ export function LoginForm({
   ...props
 }: React.ComponentProps<"div">) {
   const router = useRouter();
-  const [showDingtalk, setShowDingtalk] = useState(dingtalkEnabled);
+  const [showAdmin, setShowAdmin] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -58,55 +58,60 @@ export function LoginForm({
         <CardContent className="p-6 md:p-8">
           <div className="flex flex-col gap-6">
             <div className="flex flex-col items-center text-center">
-              <h1 className="text-2xl font-bold">管理员登录</h1>
+              <h1 className="text-2xl font-bold">钉钉扫码登录</h1>
               <p className="text-balance text-muted-foreground">
-                开发阶段使用管理员账号，上线后普通用户走钉钉扫码
+                请使用钉钉扫描下方二维码登录
               </p>
             </div>
 
-            <form className="flex flex-col gap-4" onSubmit={handleAdminSubmit}>
-              {error && (
-                <div className="rounded-md bg-destructive/10 px-4 py-2 text-sm text-destructive">
-                  {error}
-                </div>
-              )}
-              <div className="grid gap-2">
-                <Label htmlFor="email">管理员邮箱</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="admin@i2i.studio"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="password">密码</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </div>
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? "登录中..." : "登录"}
-              </Button>
-            </form>
+            {dingtalkEnabled ? (
+              <DingTalkQrLogin />
+            ) : (
+              <p className="text-center text-sm text-muted-foreground">
+                钉钉登录未配置
+              </p>
+            )}
 
-            {dingtalkEnabled && (
-              <>
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground underline underline-offset-4 hover:text-primary"
-                  onClick={() => setShowDingtalk((v) => !v)}
-                >
-                  {showDingtalk ? "收起钉钉扫码" : "钉钉扫码登录（可选）"}
-                </button>
-                {showDingtalk && <DingTalkQrLogin />}
-              </>
+            <button
+              type="button"
+              className="text-xs text-muted-foreground underline underline-offset-4 hover:text-primary"
+              onClick={() => setShowAdmin((v) => !v)}
+            >
+              {showAdmin ? "收起管理员登录" : "管理员登录"}
+            </button>
+
+            {showAdmin && (
+              <form className="flex flex-col gap-4" onSubmit={handleAdminSubmit}>
+                {error && (
+                  <div className="rounded-md bg-destructive/10 px-4 py-2 text-sm text-destructive">
+                    {error}
+                  </div>
+                )}
+                <div className="grid gap-2">
+                  <Label htmlFor="email">管理员邮箱</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="admin@i2i.studio"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="password">密码</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
+                </div>
+                <Button type="submit" className="w-full" disabled={loading}>
+                  {loading ? "登录中..." : "登录"}
+                </Button>
+              </form>
             )}
           </div>
         </CardContent>

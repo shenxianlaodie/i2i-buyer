@@ -1,18 +1,17 @@
 "use client";
 
-import { useRef, useCallback } from "react";
+import { useRef, useCallback, useState, useEffect } from "react";
 import { format } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import { Search, SlidersHorizontal, Plus, HelpCircle, Settings, MoreHorizontal } from "lucide-react";
 import { toast } from "sonner";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTRPC } from "@/server/trpc/client";
-import { useCanvasStore } from "@/store/canvas-store";
+import { useCanvasStore, type CanvasMedia } from "@/store/canvas-store";
 import { CanvasSidebar } from "./CanvasSidebar";
 import { MediaGrid } from "./MediaGrid";
 import { FloatingPromptBar } from "./FloatingPromptBar";
-import { ModelSelect } from "@/components/model/ModelSelect";
-import { useModelStore } from "@/store/model-store";
+import { useAdminModels } from "@/hooks/use-admin-models";
 import { GENERATION_SOURCE_CANVAS } from "@/lib/generation-source";
 
 export function CanvasBoard() {
@@ -28,23 +27,107 @@ export function CanvasBoard() {
     setSearch,
     setGenerating,
     addItem,
+    removeItem,
+    setItems,
     select,
   } = useCanvasStore();
-  const imageModelId = useModelStore((s) => s.imageModelId);
-  const videoModelId = useModelStore((s) => s.videoModelId);
+  const { imageModelId, videoModelId } = useAdminModels();
 
   const selected = items.find((i) => i.id === selectedId);
 
+  const [pendingGenId, setPendingGenId] = useState<string | null>(null);
+  const [pendingGenMode, setPendingGenMode] = useState<"i2i" | "i2v">("i2i");
+  const [pendingGenPrompt, setPendingGenPrompt] = useState("");
+
+  const { data: isAdmin } = useQuery(trpc.admin.isAdmin.queryOptions());
+
+  const ownGenQuery = useQuery({
+    ...trpc.generation.listRecent.queryOptions({ status: "COMPLETED", limit: 50 }),
+    enabled: isAdmin !== undefined && !isAdmin.isAdmin,
+  });
+  const allGenQuery = useQuery({
+    ...trpc.generation.listAll.queryOptions({ status: "COMPLETED", limit: 50 }),
+    enabled: isAdmin?.isAdmin === true,
+  });
+  const genListQuery = isAdmin?.isAdmin ? allGenQuery : ownGenQuery;
+
+  useEffect(() => {
+    if (!genListQuery.data) return;
+    const canvasItems: CanvasMedia[] = genListQuery.data.items.map((gen) => ({
+      id: `gen-${gen.id}`,
+      type: gen.type as "IMAGE" | "VIDEO",
+      url: gen.outputUrls?.[0] ?? "",
+      prompt: gen.prompt,
+      category: gen.type === "VIDEO" ? "video" : "image",
+      createdAt: gen.createdAt.toISOString(),
+      generationId: gen.id,
+    }));
+    setItems(canvasItems);
+  }, [genListQuery.data]);
+
+  const genStatusQuery = useQuery({
+    ...trpc.generation.getStatus.queryOptions({ generationId: pendingGenId! }),
+    enabled: !!pendingGenId,
+    refetchInterval: 2000,
+  });
+
+  useEffect(() => {
+    if (!genStatusQuery.data) return;
+    const gen = genStatusQuery.data;
+    if (gen.status === "COMPLETED") {
+      const outUrl = gen.outputUrls?.[0] ??
+        (pendingGenMode === "i2v" ? selected?.url : `https://picsum.photos/seed/${Date.now()}/480/640`);
+      addItem({
+        id: `gen-${gen.id}`,
+        type: gen.type as "IMAGE" | "VIDEO",
+        url: outUrl ?? "",
+        prompt: pendingGenPrompt,
+        category: pendingGenMode === "i2v" ? "video" : "image",
+        createdAt: new Date().toISOString(),
+        generationId: gen.id,
+      });
+      toast.success(pendingGenMode === "i2v" ? "图生视频完成" : "图生图完成");
+      setPendingGenId(null);
+      setGenerating(false);
+      useCanvasStore.getState().setPrompt("");
+    } else if (gen.status === "FAILED") {
+      toast.error(gen.errorMessage ?? "生成失败");
+      setPendingGenId(null);
+      setGenerating(false);
+    }
+  }, [genStatusQuery.data]);
+
   const createImage = useMutation(
     trpc.generation.createImage.mutationOptions({
-      onError: (e) => toast.error(e.message),
+      onError: (e) => { toast.error(e.message); setGenerating(false); },
     }),
   );
   const createVideo = useMutation(
     trpc.generation.createVideo.mutationOptions({
-      onError: (e) => toast.error(e.message),
+      onError: (e) => { toast.error(e.message); setGenerating(false); },
     }),
   );
+
+  const trashItem = useMutation(
+    trpc.canvas.trashItem.mutationOptions({
+      onSuccess: (_data, variables) => {
+        removeItem(variables.itemId);
+        toast.success("已移至回收站");
+      },
+      onError: (e) => toast.error(e.message ?? "删除失败"),
+    }),
+  );
+
+  const handleDelete = useCallback((item: CanvasMedia) => {
+    trashItem.mutate({
+      itemId: item.id,
+      type: item.type,
+      url: item.url,
+      prompt: item.prompt,
+      category: item.category,
+      originalCreatedAt: item.createdAt,
+    });
+  }, [trashItem]);
 
   const handleUpload = useCallback(() => {
     fileRef.current?.click();
@@ -86,27 +169,18 @@ export function CanvasBoard() {
     setGenerating(true);
     try {
       if (mode === "i2i") {
-        const imgResult = await createImage.mutateAsync({
+        const result = await createImage.mutateAsync({
           prompt: prompt.trim() || "基于参考图生成变体",
           modelId,
           provider: "ephone",
           aspectRatio,
           referenceImageUrl: selected?.url,
         });
-        const outUrl =
-          imgResult.outputUrls?.[0] ??
-          `https://picsum.photos/seed/${Date.now()}/480/640`;
-        addItem({
-          id: `gen-${Date.now()}`,
-          type: "IMAGE",
-          url: outUrl,
-          prompt: prompt.trim() || "图生图结果",
-          category: "image",
-          createdAt: new Date().toISOString(),
-        });
-        toast.success("图生图完成");
+        setPendingGenId(result.generationId);
+        setPendingGenMode("i2i");
+        setPendingGenPrompt(prompt.trim() || "图生图结果");
       } else {
-        const vidResult = await createVideo.mutateAsync({
+        const result = await createVideo.mutateAsync({
           prompt: prompt.trim() || "基于参考图生成视频",
           modelId,
           provider: "ephone",
@@ -114,22 +188,12 @@ export function CanvasBoard() {
           referenceImageUrl: selected!.url,
           source: GENERATION_SOURCE_CANVAS,
         });
-        const outUrl =
-          vidResult.outputUrls?.[0] ?? selected!.url;
-        addItem({
-          id: `gen-${Date.now()}`,
-          type: "VIDEO",
-          url: outUrl,
-          prompt: prompt.trim() || "图生视频结果",
-          category: "video",
-          createdAt: new Date().toISOString(),
-        });
-        toast.success("图生视频完成");
+        setPendingGenId(result.generationId);
+        setPendingGenMode("i2v");
+        setPendingGenPrompt(prompt.trim() || "图生视频结果");
       }
-      useCanvasStore.getState().setPrompt("");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "生成失败");
-    } finally {
       setGenerating(false);
     }
   };
@@ -159,8 +223,6 @@ export function CanvasBoard() {
           <SlidersHorizontal className="absolute right-3 size-4 text-zinc-500" />
         </div>
         <div className="flex items-center gap-2 text-zinc-400">
-          <ModelSelect type="image" label="图" className="[&_span]:text-zinc-500" />
-          <ModelSelect type="video" label="视频" className="[&_span]:text-zinc-500" />
           <button type="button" onClick={handleUpload} className="rounded-full p-2 hover:bg-zinc-800 hover:text-white">
             <Plus className="size-4" />
           </button>
@@ -179,7 +241,7 @@ export function CanvasBoard() {
       <div className="flex min-h-0 flex-1">
         <CanvasSidebar />
         <div className="relative min-h-0 flex-1 overflow-auto pb-32">
-          <MediaGrid />
+          <MediaGrid onDelete={handleDelete} />
           <FloatingPromptBar onGenerate={handleGenerate} onUpload={handleUpload} />
         </div>
       </div>

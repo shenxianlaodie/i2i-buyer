@@ -5,7 +5,7 @@ export function expandColumnWidths<K extends string>(
   containerWidth: number,
   flexKeys: readonly K[],
 ): Record<K, number> {
-  const total = Object.values(widths).reduce((sum, w) => sum + w, 0);
+  const total = (Object.values(widths) as number[]).reduce((sum, w) => sum + w, 0);
   if (containerWidth <= total) return widths;
 
   const extra = containerWidth - total;
@@ -26,7 +26,7 @@ export function expandColumnWidths<K extends string>(
 }
 
 export function sumColumnWidths(widths: Record<string, number>) {
-  return Object.values(widths).reduce((sum, w) => sum + w, 0);
+  return (Object.values(widths) as number[]).reduce((sum, w) => sum + w, 0);
 }
 
 export function useWorkbenchTableContainer() {

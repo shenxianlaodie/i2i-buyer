@@ -1,38 +1,68 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 
 declare global {
   interface Window {
-    DTFrameLogin?: (
-      frameConfig: { id: string; width: number; height: number },
-      authConfig: Record<string, string>,
-      onSuccess: (result: { authCode: string; redirectUrl?: string }) => void,
-      onError: (msg: string) => void,
-    ) => void;
+    DDLogin?: (config: {
+      id: string;
+      goto: string;
+      width?: string;
+      height?: string;
+      style?: string;
+      href?: string;
+      appid?: string;
+    }) => void;
   }
 }
 
 const SCRIPT_URL =
-  "https://g.alicdn.com/dingding/dingtalk-login/0.0.5/ddLogin.js";
+  "https://g.alicdn.com/dingding/dinglogin/0.0.5/ddLogin.js";
 
 export function DingTalkQrLogin() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sdkReady, setSdkReady] = useState(false);
 
   const clientId = process.env.NEXT_PUBLIC_AUTH_DINGTALK_ID;
-  const redirectUri =
+  const gotoUrl =
     typeof window !== "undefined"
       ? `${window.location.origin}/login`
-      : process.env.NEXT_PUBLIC_APP_URL
-        ? `${process.env.NEXT_PUBLIC_APP_URL}/login`
-        : "";
+      : "";
 
+  const handleAuthCode = useCallback(
+    async (authCode: string) => {
+      setLoading(true);
+      setError(null);
+      const res = await signIn("dingtalk-qr", {
+        authCode,
+        redirect: false,
+      });
+      if (res?.error) {
+        setError("钉钉登录失败，请重试");
+        setLoading(false);
+        return;
+      }
+      router.push("/studio");
+      router.refresh();
+    },
+    [router],
+  );
+
+  // Handle authCode from URL (after DingTalk redirect)
+  useEffect(() => {
+    const code = searchParams.get("code");
+    if (code && !loading) {
+      handleAuthCode(code);
+    }
+  }, [searchParams, handleAuthCode, loading]);
+
+  // Load SDK and render QR
   useEffect(() => {
     if (!clientId) return;
 
@@ -51,40 +81,19 @@ export function DingTalkQrLogin() {
   }, [clientId]);
 
   useEffect(() => {
-    if (!sdkReady || !clientId || !window.DTFrameLogin) {
-      return;
-    }
+    if (!sdkReady || !clientId || !window.DDLogin) return;
 
-    window.DTFrameLogin(
-      { id: "dingtalk-qr-container", width: 300, height: 300 },
-      {
-        redirect_uri: encodeURIComponent(redirectUri),
-        client_id: clientId,
-        scope: "openid",
-        response_type: "code",
-        state: crypto.randomUUID(),
-        prompt: "consent",
-      },
-      async (result) => {
-        setLoading(true);
-        setError(null);
-        const res = await signIn("dingtalk-qr", {
-          authCode: result.authCode,
-          redirect: false,
-        });
-        if (res?.error) {
-          setError("钉钉登录失败，请重试");
-          setLoading(false);
-          return;
-        }
-        router.push("/studio");
-        router.refresh();
-      },
-      (msg) => {
-        setError(msg || "扫码登录失败");
-      },
-    );
-  }, [sdkReady, clientId, redirectUri, router]);
+    const container = document.getElementById("dingtalk-qr-container");
+    if (container && container.children.length > 0) return;
+
+    window.DDLogin({
+      id: "dingtalk-qr-container",
+      goto: encodeURIComponent(gotoUrl),
+      width: "300",
+      height: "300",
+      appid: clientId,
+    });
+  }, [sdkReady, clientId, gotoUrl]);
 
   async function handleRedirectLogin() {
     setLoading(true);
@@ -110,6 +119,9 @@ export function DingTalkQrLogin() {
       <div id="dingtalk-qr-container" className="min-h-[300px] min-w-[300px]" />
       {error && (
         <p className="text-sm text-destructive text-center">{error}</p>
+      )}
+      {loading && (
+        <p className="text-sm text-muted-foreground text-center">登录中...</p>
       )}
       <Button
         variant="outline"

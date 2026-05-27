@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { router, protectedProcedure, publicProcedure } from "@/server/trpc/init";
+import { router, protectedProcedure, publicProcedure, adminProcedure } from "@/server/trpc/init";
 import { db } from "@/lib/db";
-import { checkBalance, reserveCredits, refundCredits } from "@/lib/credits";
+import { reserveCredits, refundCredits } from "@/lib/credits";
 import { TRPCError } from "@trpc/server";
-import { runImageGeneration, runVideoGeneration } from "@/server/ai-gateway/run-generation";
+import { enqueueImage, enqueueVideo } from "@/server/ai-gateway/worker";
 import { GENERATION_SOURCE_CANVAS } from "@/lib/generation-source";
 
 const aspectRatioEnum = z.enum(["1:1", "16:9", "9:16", "4:3", "3:4", "21:9"]);
@@ -38,14 +38,6 @@ export const generationRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const balance = await checkBalance(ctx.userId, input.modelId);
-      if (!balance.ok) {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: `Insufficient credits: need ${balance.required}, have ${balance.current}`,
-        });
-      }
-
       const generation = await db.generation.create({
         data: {
           userId: ctx.userId,
@@ -70,9 +62,8 @@ export const generationRouter = router({
       });
 
       await reserveCredits(ctx.userId, generation.id, input.modelId);
-
-      const result = await runImageGeneration(generation.id);
-      return { generationId: generation.id, outputUrls: result.outputUrls };
+      enqueueImage(generation.id);
+      return { generationId: generation.id };
     }),
 
   createVideo: protectedProcedure
@@ -91,14 +82,6 @@ export const generationRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const balance = await checkBalance(ctx.userId, input.modelId);
-      if (!balance.ok) {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: `Insufficient credits: need ${balance.required}, have ${balance.current}`,
-        });
-      }
-
       const generation = await db.generation.create({
         data: {
           userId: ctx.userId,
@@ -121,12 +104,8 @@ export const generationRouter = router({
       });
 
       await reserveCredits(ctx.userId, generation.id, input.modelId);
-
-      const result = await runVideoGeneration(generation.id);
-      return {
-        generationId: generation.id,
-        outputUrls: result.outputUrls,
-      };
+      enqueueVideo(generation.id);
+      return { generationId: generation.id };
     }),
 
   getStatus: protectedProcedure
@@ -154,6 +133,35 @@ export const generationRouter = router({
           userId: ctx.userId,
           ...(input.type ? { type: input.type } : {}),
           ...(input.status ? { status: input.status } : {}),
+        },
+        orderBy: { createdAt: "desc" },
+        take: input.limit + 1,
+        ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+      });
+
+      let nextCursor: string | undefined;
+      if (items.length > input.limit) {
+        const next = items.pop();
+        nextCursor = next?.id;
+      }
+
+      return { items, nextCursor };
+    }),
+
+  listAll: adminProcedure
+    .input(
+      z.object({
+        type: generationTypeEnum.optional(),
+        status: generationStatusEnum.optional(),
+        cursor: z.string().optional(),
+        limit: z.number().min(1).max(50).default(20),
+      }),
+    )
+    .query(async ({ input }) => {
+      const items = await db.generation.findMany({
+        where: {
+          ...(input.type ? { type: input.type } : {}),
+          ...(input.status ? { status: input.status } : { status: "COMPLETED" }),
         },
         orderBy: { createdAt: "desc" },
         take: input.limit + 1,

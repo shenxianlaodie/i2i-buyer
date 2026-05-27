@@ -11,9 +11,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Coins, LogOut, Settings } from "lucide-react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 export function Topbar() {
+  const router = useRouter();
   return (
     <header className="flex h-14 items-center justify-between gap-4 border-b bg-background px-4 lg:px-6">
       <div className="flex lg:hidden items-center gap-2 font-semibold text-sm">
@@ -26,7 +27,7 @@ export function Topbar() {
           <span className="font-medium">100</span>
         </Button>
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+          <DropdownMenuTrigger className="rounded-full size-8 [&>button]:size-full">
             <Button variant="ghost" size="icon" className="rounded-full size-8">
               <Avatar className="size-8">
                 <AvatarImage src="" alt="User" />
@@ -35,11 +36,12 @@ export function Topbar() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-40">
-            <DropdownMenuItem asChild>
-              <Link href="/settings" className="cursor-pointer">
-                <Settings className="size-4" />
-                设置
-              </Link>
+            <DropdownMenuItem
+              className="cursor-pointer"
+              onClick={() => router.push("/settings")}
+            >
+              <Settings className="size-4" />
+              设置
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem

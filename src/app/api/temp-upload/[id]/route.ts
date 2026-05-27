@@ -17,7 +17,7 @@ export async function GET(
     return NextResponse.json({ error: "图片不存在或已过期" }, { status: 404 });
   }
 
-  return new NextResponse(entry.buffer, {
+  return new NextResponse(new Uint8Array(entry.buffer), {
     headers: {
       "Content-Type": entry.mime,
       "Cache-Control": "private, no-store",

@@ -1,14 +1,19 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { Heart, RefreshCw, MoreHorizontal, Check } from "lucide-react";
+import { Check, Trash2 } from "lucide-react";
 import type { CanvasMedia } from "@/store/canvas-store";
 import { useCanvasStore } from "@/store/canvas-store";
 
-export function MediaCard({ item }: { item: CanvasMedia }) {
+export function MediaCard({
+  item,
+  onDelete,
+}: {
+  item: CanvasMedia;
+  onDelete?: (item: CanvasMedia) => void;
+}) {
   const selectedId = useCanvasStore((s) => s.selectedId);
   const select = useCanvasStore((s) => s.select);
-  const toggleFavorite = useCanvasStore((s) => s.toggleFavorite);
   const isSelected = selectedId === item.id;
 
   return (
@@ -42,30 +47,25 @@ export function MediaCard({ item }: { item: CanvasMedia }) {
             <Check className="size-3.5" />
           </div>
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30 opacity-0 transition-opacity group-hover:opacity-100">
-          <div className="absolute top-2 right-2 flex gap-1">
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100">
+          <div className="absolute top-2 right-2">
             <span
               role="button"
               tabIndex={0}
               onClick={(e) => {
                 e.stopPropagation();
-                toggleFavorite(item.id);
+                onDelete?.(item);
               }}
-              onKeyDown={(e) => e.key === "Enter" && toggleFavorite(item.id)}
-              className="flex size-8 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm hover:bg-black/70"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.stopPropagation();
+                  onDelete?.(item);
+                }
+              }}
+              className="flex size-7 items-center justify-center rounded-full bg-red-500/80 text-white hover:bg-red-500"
+              title="删除"
             >
-              <Heart
-                className={cn(
-                  "size-4",
-                  item.isFavorite && "fill-red-500 text-red-500",
-                )}
-              />
-            </span>
-            <span className="flex size-8 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm">
-              <RefreshCw className="size-4" />
-            </span>
-            <span className="flex size-8 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm">
-              <MoreHorizontal className="size-4" />
+              <Trash2 className="size-3.5" />
             </span>
           </div>
           <div className="absolute bottom-0 inset-x-0 px-3 py-2">

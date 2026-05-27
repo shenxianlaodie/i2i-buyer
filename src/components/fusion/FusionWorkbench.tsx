@@ -29,9 +29,9 @@ import {
   Loader2,
   History,
 } from "lucide-react";
-import { ModelSelect } from "@/components/model/ModelSelect";
+
 import { AdaptiveImage } from "@/components/ui/adaptive-image";
-import { useModelStore } from "@/store/model-store";
+import { useAdminModels } from "@/hooks/use-admin-models";
 import { getFusionRowImages, setFusionRowImages } from "@/lib/workbench-images";
 import {
   expandColumnWidths,
@@ -470,6 +470,7 @@ function FusionRow({
     !!row.baseGroupAnchorId && row.baseGroupAnchorId !== row.id;
   const trpc = useTRPC();
   const [generating, setGenerating] = useState(false);
+  const [pendingGenId, setPendingGenId] = useState<string | null>(null);
 
   const updateRow = useMutation(
     trpc.fusion.updateRow.mutationOptions({
@@ -477,7 +478,7 @@ function FusionRow({
     }),
   );
 
-  const imageModelId = useModelStore((s) => s.imageModelId);
+  const { imageModelId } = useAdminModels();
   const generate = useMutation(trpc.fusion.generate.mutationOptions());
   const setVersion = useMutation(
     trpc.fusion.setActiveVersion.mutationOptions({
@@ -498,6 +499,27 @@ function FusionRow({
       onError: (e) => toast.error(e.message),
     }),
   );
+
+  const genStatusQuery = useQuery({
+    ...trpc.generation.getStatus.queryOptions({ generationId: pendingGenId! }),
+    enabled: !!pendingGenId,
+    refetchInterval: 2000,
+  });
+
+  useEffect(() => {
+    if (!genStatusQuery.data) return;
+    const gen = genStatusQuery.data;
+    if (gen.status === "COMPLETED") {
+      toast.success("融合图已生成");
+      setPendingGenId(null);
+      setGenerating(false);
+      onRefresh();
+    } else if (gen.status === "FAILED") {
+      toast.error(gen.errorMessage ?? "生成失败");
+      setPendingGenId(null);
+      setGenerating(false);
+    }
+  }, [genStatusQuery.data]);
 
   const activeVersion =
     row.versions.find((v) => v.id === row.activeVersionId) ?? row.versions[0];
@@ -548,17 +570,15 @@ function FusionRow({
     setGenerating(true);
     try {
       await save({ rowId: row.id, prompt });
-      await generate.mutateAsync({
+      const result = await generate.mutateAsync({
         rowId: row.id,
         modelId: imageModelId,
         baseImageUrl: baseUrl,
         printImageUrl: printUrl,
       });
-      toast.success("融合图已生成");
-      onRefresh();
+      setPendingGenId(result.generationId);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "生成失败");
-    } finally {
       setGenerating(false);
     }
   };
@@ -713,7 +733,7 @@ export function FusionWorkbench() {
         "prompt",
         "preview",
         "remark",
-      ]),
+      ] as readonly FusionColKey[]),
     [widths, containerWidth],
   );
   const minTableWidth = sumColumnWidths(widths);
@@ -750,8 +770,9 @@ export function FusionWorkbench() {
       onError: (e) => toast.error(e.message),
     }),
   );
-  const imageModelId = useModelStore((s) => s.imageModelId);
+  const { imageModelId } = useAdminModels();
   const [batchGenerating, setBatchGenerating] = useState(false);
+  const [pendingGenIds, setPendingGenIds] = useState<string[]>([]);
 
   const batchKey = trpc.fusion.getBatch.queryKey({});
 
@@ -761,6 +782,26 @@ export function FusionWorkbench() {
 
   const batch = batchQuery.data;
   const rows = (batch?.rows ?? []) as FusionRowData[];
+
+  const batchPollQuery = useQuery({
+    ...trpc.generation.getStatus.queryOptions({ generationId: pendingGenIds[0]! }),
+    enabled: pendingGenIds.length > 0,
+    refetchInterval: 2000,
+  });
+
+  useEffect(() => {
+    if (!batchPollQuery.data || pendingGenIds.length === 0) return;
+    const gen = batchPollQuery.data;
+    if (gen.status === "COMPLETED" || gen.status === "FAILED") {
+      const remaining = pendingGenIds.filter((id) => id !== gen.id);
+      setPendingGenIds(remaining);
+      if (remaining.length === 0) {
+        toast.success("批量生成完成");
+        setBatchGenerating(false);
+        refresh();
+      }
+    }
+  }, [batchPollQuery.data]);
 
   const handleImportBaseImages = useCallback(
     async (fromRowId: string, files: File[]) => {
@@ -825,24 +866,22 @@ export function FusionWorkbench() {
     }
 
     setBatchGenerating(true);
-    let ok = 0;
     try {
+      const ids: string[] = [];
       for (const row of eligible) {
         const imgs = images[row.id]!;
         await updateRow.mutateAsync({ rowId: row.id, prompt: row.prompt });
-        await generate.mutateAsync({
+        const result = await generate.mutateAsync({
           rowId: row.id,
           modelId: imageModelId,
           baseImageUrl: imgs.base!,
           printImageUrl: imgs.print!,
         });
-        ok++;
+        ids.push(result.generationId);
       }
-      toast.success(`已生成 ${ok} 张融合图`);
-      refresh();
+      setPendingGenIds(ids);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "批量生成失败");
-    } finally {
       setBatchGenerating(false);
     }
   }, [batch?.id, rows, imageModelId, updateRow, generate, refresh]);
@@ -857,7 +896,6 @@ export function FusionWorkbench() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <ModelSelect type="image" label="图片模型" />
           <Button
             variant="outline"
             size="sm"

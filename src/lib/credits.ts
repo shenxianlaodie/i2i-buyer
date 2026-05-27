@@ -18,19 +18,6 @@ export function getCreditCost(modelId: string): number {
   return CREDIT_COSTS[modelId] ?? 10;
 }
 
-export async function checkBalance(
-  userId: string,
-  modelId: string,
-): Promise<{ ok: true } | { ok: false; required: number; current: number }> {
-  const user = await db.user.findUnique({ where: { id: userId } });
-  if (!user) throw new Error("User not found");
-  const required = getCreditCost(modelId);
-  if (user.credits < required) {
-    return { ok: false, required, current: user.credits };
-  }
-  return { ok: true };
-}
-
 export async function reserveCredits(
   userId: string,
   generationId: string,

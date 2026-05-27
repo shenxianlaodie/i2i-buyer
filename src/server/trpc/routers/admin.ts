@@ -6,6 +6,8 @@ import { grantCredits, setUserCredits } from "@/lib/credits";
 import {
   getPromptSettings,
   savePromptSettings,
+  getModelSettings,
+  saveModelSettings,
 } from "@/lib/system-settings";
 import { POSE_TYPES } from "@/lib/pose-types";
 
@@ -210,6 +212,20 @@ export const adminRouter = router({
     )
     .mutation(async ({ input }) => {
       await savePromptSettings(input);
+      return { success: true };
+    }),
+
+  getModelSettings: protectedProcedure.query(async () => getModelSettings()),
+
+  updateModelSettings: adminProcedure
+    .input(
+      z.object({
+        imageModelId: z.string().min(1),
+        videoModelId: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      await saveModelSettings(input);
       return { success: true };
     }),
 });

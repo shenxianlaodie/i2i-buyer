@@ -17,9 +17,9 @@ import { toast } from "sonner";
 import { Plus, Trash2, Loader2 } from "lucide-react";
 import { PoseSection } from "./PoseSection";
 import { ProductCopyFields } from "./ProductCopyFields";
-import { ModelSelect } from "@/components/model/ModelSelect";
+
 import { AdaptiveImage } from "@/components/ui/adaptive-image";
-import { useModelStore } from "@/store/model-store";
+import { useAdminModels } from "@/hooks/use-admin-models";
 import { getPoseRowImages, setPoseRowImages } from "@/lib/workbench-images";
 import { POSE_TYPES, POSE_LABELS, type PoseType } from "@/lib/pose-types";
 import { cn } from "@/lib/utils";
@@ -494,7 +494,7 @@ export function PoseWorkbench() {
       onError: (e) => toast.error(e.message),
     }),
   );
-  const imageModelId = useModelStore((s) => s.imageModelId);
+  const { imageModelId } = useAdminModels();
   const { widths, resizeCol } = usePoseColumnWidths();
   const { containerRef, containerWidth } = useWorkbenchTableContainer();
   const displayWidths = useMemo(
@@ -503,12 +503,13 @@ export function PoseWorkbench() {
         "poses",
         "productTitle",
         "productDescription",
-      ]),
+      ] as readonly PoseColKey[]),
     [widths, containerWidth],
   );
   const minTableWidth = sumColumnWidths(widths);
   const [batchBusy, setBatchBusy] = useState(false);
   const [generatingPose, setGeneratingPose] = useState<PoseType | null>(null);
+  const [pendingGenIds, setPendingGenIds] = useState<string[]>([]);
 
   const batchKey = trpc.pose.getBatch.queryKey({});
 
@@ -518,6 +519,26 @@ export function PoseWorkbench() {
 
   const batch = batchQuery.data;
   const rows = (batch?.rows ?? []) as PoseRowData[];
+
+  const batchPollQuery = useQuery({
+    ...trpc.generation.getStatus.queryOptions({ generationId: pendingGenIds[0]! }),
+    enabled: pendingGenIds.length > 0,
+    refetchInterval: 2000,
+  });
+
+  useEffect(() => {
+    if (!batchPollQuery.data || pendingGenIds.length === 0) return;
+    const gen = batchPollQuery.data;
+    if (gen.status === "COMPLETED" || gen.status === "FAILED") {
+      const remaining = pendingGenIds.filter((id) => id !== gen.id);
+      setPendingGenIds(remaining);
+      if (remaining.length === 0) {
+        toast.success(`${POSE_LABELS[generatingPose!]} 生成完成`);
+        setGeneratingPose(null);
+        refresh();
+      }
+    }
+  }, [batchPollQuery.data]);
 
   const handleImportSourceImages = useCallback(
     async (fromRowId: string, files: File[]) => {
@@ -590,22 +611,20 @@ export function PoseWorkbench() {
       }
 
       setGeneratingPose(pose);
-      let ok = 0;
       try {
+        const ids: string[] = [];
         for (const row of eligible) {
-          await regeneratePose.mutateAsync({
+          const result = await regeneratePose.mutateAsync({
             rowId: row.id,
             poseType: pose,
             sourceImageUrl: images[row.id]!.source!.trim(),
             modelId: imageModelId,
           });
-          ok++;
+          ids.push(result.generationId);
         }
-        toast.success(`${POSE_LABELS[pose]} 已生成 ${ok} 张`);
-        refresh();
+        setPendingGenIds(ids);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "生成失败");
-      } finally {
         setGeneratingPose(null);
       }
     },
@@ -622,7 +641,6 @@ export function PoseWorkbench() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <ModelSelect type="image" label="图片模型" />
           <Button
             variant="outline"
             size="sm"

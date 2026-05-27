@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import type { AspectRatio } from "@/server/ai-gateway/types";
 
-export type CanvasFilter = "all" | "image" | "video";
+export type CanvasFilter = "all" | "image" | "video" | "trash";
 export type CanvasMode = "i2i" | "i2v";
 
 export interface CanvasMedia {
@@ -12,9 +12,10 @@ export interface CanvasMedia {
   url: string;
   thumbnailUrl?: string;
   prompt: string;
-  category: CanvasFilter;
+  category: string;
   isFavorite?: boolean;
   createdAt: string;
+  generationId?: string;
 }
 
 interface CanvasState {
@@ -37,17 +38,12 @@ interface CanvasState {
   select: (id: string | null) => void;
   toggleFavorite: (id: string) => void;
   addItem: (item: CanvasMedia) => void;
+  removeItem: (id: string) => void;
+  setItems: (items: CanvasMedia[]) => void;
   setGenerating: (v: boolean) => void;
 }
 
-const SEED_ITEMS: CanvasMedia[] = Array.from({ length: 16 }, (_, i) => ({
-  id: `seed-${i}`,
-  type: i % 5 === 0 ? ("VIDEO" as const) : ("IMAGE" as const),
-  url: `https://picsum.photos/seed/canvas${i}/480/${i % 3 === 0 ? 640 : 480}`,
-  prompt: `创意素材 #${i + 1}`,
-  category: i % 5 === 0 ? ("video" as const) : ("image" as const),
-  createdAt: new Date(Date.now() - i * 3600000).toISOString(),
-}));
+const SEED_ITEMS: CanvasMedia[] = [];
 
 export const useCanvasStore = create<CanvasState>((set, get) => ({
   items: SEED_ITEMS,
@@ -74,5 +70,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ),
     }),
   addItem: (item) => set({ items: [item, ...get().items] }),
+  removeItem: (id) => set({ items: get().items.filter((it) => it.id !== id) }),
+  setItems: (items) => set({ items }),
   setGenerating: (v) => set({ isGenerating: v }),
 }));
