@@ -58,9 +58,9 @@ export function LoginForm({
         <CardContent className="p-6 md:p-8">
           <div className="flex flex-col gap-6">
             <div className="flex flex-col items-center text-center">
-              <h1 className="text-2xl font-bold">钉钉扫码登录</h1>
+              <h1 className="text-2xl font-bold">登录 i2i Studio</h1>
               <p className="text-balance text-muted-foreground">
-                请使用钉钉扫描下方二维码登录
+                使用钉钉账号授权登录
               </p>
             </div>
 

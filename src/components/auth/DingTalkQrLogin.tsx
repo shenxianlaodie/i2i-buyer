@@ -1,104 +1,33 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { signIn } from "next-auth/react";
-import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 
-declare global {
-  interface Window {
-    DDLogin?: (config: {
-      id: string;
-      goto: string;
-      width?: string;
-      height?: string;
-      style?: string;
-      href?: string;
-      appid?: string;
-    }) => void;
-  }
-}
-
-const SCRIPT_URL =
-  "https://g.alicdn.com/dingding/dinglogin/0.0.5/ddLogin.js";
-
+/**
+ * 钉钉扫码登录组件
+ *
+ * 直接跳转钉钉 OAuth 授权页面（oauth2/challenge.htm），
+ * 该页面在桌面端会展示二维码供用户扫描，扫码后回调至 /studio。
+ *
+ * 注意：已废弃 ddLogin.js v0.0.5 内嵌 iframe 方案，
+ * 因为钉钉已弃用 qrcode.htm 端点，该端点不再接受参数。
+ */
 export function DingTalkQrLogin() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sdkReady, setSdkReady] = useState(false);
 
   const clientId = process.env.NEXT_PUBLIC_AUTH_DINGTALK_ID;
-  const gotoUrl =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/login`
-      : "";
 
-  const handleAuthCode = useCallback(
-    async (authCode: string) => {
-      setLoading(true);
-      setError(null);
-      const res = await signIn("dingtalk-qr", {
-        authCode,
-        redirect: false,
-      });
-      if (res?.error) {
-        setError("钉钉登录失败，请重试");
-        setLoading(false);
-        return;
-      }
-      router.push("/studio");
-      router.refresh();
-    },
-    [router],
-  );
-
-  // Handle authCode from URL (after DingTalk redirect)
-  useEffect(() => {
-    const code = searchParams.get("code");
-    if (code && !loading) {
-      handleAuthCode(code);
-    }
-  }, [searchParams, handleAuthCode, loading]);
-
-  // Load SDK and render QR
-  useEffect(() => {
-    if (!clientId) return;
-
-    const existing = document.querySelector(`script[src="${SCRIPT_URL}"]`);
-    if (existing) {
-      setSdkReady(true);
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = SCRIPT_URL;
-    script.async = true;
-    script.onload = () => setSdkReady(true);
-    script.onerror = () => setError("钉钉登录组件加载失败");
-    document.body.appendChild(script);
-  }, [clientId]);
-
-  useEffect(() => {
-    if (!sdkReady || !clientId || !window.DDLogin) return;
-
-    const container = document.getElementById("dingtalk-qr-container");
-    if (container && container.children.length > 0) return;
-
-    window.DDLogin({
-      id: "dingtalk-qr-container",
-      goto: encodeURIComponent(gotoUrl),
-      width: "300",
-      height: "300",
-      appid: clientId,
-    });
-  }, [sdkReady, clientId, gotoUrl]);
-
-  async function handleRedirectLogin() {
+  async function handleLogin() {
     setLoading(true);
     setError(null);
-    await signIn("dingtalk", { callbackUrl: "/studio" });
+    try {
+      await signIn("dingtalk", { callbackUrl: "/studio" });
+    } catch {
+      setError("登录跳转失败，请重试");
+      setLoading(false);
+    }
   }
 
   if (!clientId) {
@@ -107,31 +36,54 @@ export function DingTalkQrLogin() {
         <p className="text-sm text-destructive">
           未配置 NEXT_PUBLIC_AUTH_DINGTALK_ID
         </p>
-        <Button className="w-full" onClick={handleRedirectLogin} disabled={loading}>
-          跳转钉钉登录
-        </Button>
+        <p className="text-sm text-muted-foreground">
+          请在 .env 中配置钉钉开放平台应用参数后重新构建
+        </p>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col items-center gap-4">
-      <div id="dingtalk-qr-container" className="min-h-[300px] min-w-[300px]" />
+      <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 p-8 text-center">
+        <svg
+          className="size-12 text-muted-foreground/50"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        >
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <rect x="7" y="7" width="10" height="10" />
+          <rect x="8.5" y="8.5" width="7" height="7" />
+          <rect x="10" y="10" width="4" height="4" />
+        </svg>
+        <p className="text-sm text-muted-foreground">
+          点击下方按钮跳转钉钉授权页面
+          <br />
+          使用钉钉 App 扫描页面上的二维码即可登录
+        </p>
+      </div>
+
       {error && (
         <p className="text-sm text-destructive text-center">{error}</p>
       )}
       {loading && (
-        <p className="text-sm text-muted-foreground text-center">登录中...</p>
+        <p className="text-sm text-muted-foreground text-center">跳转中...</p>
       )}
+
       <Button
-        variant="outline"
         className="w-full"
-        type="button"
+        size="lg"
         disabled={loading}
-        onClick={handleRedirectLogin}
+        onClick={handleLogin}
       >
-        {loading ? "登录中..." : "使用钉钉网页授权登录"}
+        {loading ? "跳转中..." : "钉钉扫码登录"}
       </Button>
+
+      <p className="text-xs text-muted-foreground">
+        将跳转至钉钉授权页面，使用钉钉 App 扫码即可完成登录
+      </p>
     </div>
   );
 }

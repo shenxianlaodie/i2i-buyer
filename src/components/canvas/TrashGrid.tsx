@@ -101,7 +101,7 @@ export function TrashGrid() {
                     {item.prompt}
                   </p>
                   <p className="text-[10px] text-zinc-400">
-                    删除者: {item.user.name ?? item.user.email ?? "未知"}
+                    删除者: {item.user?.name ?? item.user?.email ?? "未知"}
                   </p>
                   <p className="text-[10px] text-zinc-500">
                     {new Date(item.trashedAt).toLocaleString("zh-CN")}

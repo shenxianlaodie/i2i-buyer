@@ -11,6 +11,8 @@ import {
   createEphoneImageGateway,
   createEphoneVideoGateway,
 } from "./ephone/gateway";
+import { createKlingVideoGateway } from "./ephone/kling-gateway";
+import { createTuziVideoGateway } from "./ephone/tuzi-gateway";
 
 type ApiKeys = Partial<Record<ProviderId, string>>;
 
@@ -57,10 +59,16 @@ export function createGatewayRegistry(apiKeys: ApiKeys): GatewayRegistry {
     videoGateways.set("pika", gw);
   }
 
-  // Kling
+  // Kling (OmniVideo API via ephone proxy)
   if (apiKeys.kling) {
-    const gw = createKlingGateway(apiKeys.kling);
+    const gw = createKlingVideoGateway(apiKeys.kling);
     videoGateways.set("kling", gw);
+  }
+
+  // Tuzi (兔子 API) — Sora-2 图生视频 / 文生视频
+  if (apiKeys.tuzi) {
+    const gw = createTuziVideoGateway(apiKeys.tuzi);
+    videoGateways.set("tuzi", gw);
   }
 
   return {
@@ -396,76 +404,8 @@ function createPikaGateway(apiKey: string): VideoGenerationGateway {
   };
 }
 
-function createKlingGateway(apiKey: string): VideoGenerationGateway {
-  return {
-    async submit(input) {
-      const resp = await fetch(`${process.env.KLING_BASE_URL}/video/generate`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "kling-v1-6",
-          prompt: input.prompt,
-          duration: input.duration ?? 5,
-          aspect_ratio: input.aspectRatio ?? "16:9",
-        }),
-      });
-      const data = await resp.json() as { id: string };
-      return {
-        jobId: data.id,
-        provider: "kling",
-        modelId: input.modelId,
-        status: "queued",
-        estimatedCompletion: null,
-        providerMetadata: data,
-      };
-    },
-
-    async getStatus(jobId: string) {
-      const resp = await fetch(
-        `${process.env.KLING_BASE_URL}/video/status/${jobId}`,
-        { headers: { Authorization: `Bearer ${apiKey}` } },
-      );
-      const data = await resp.json() as { status: string };
-      const statusMap: Record<string, "queued" | "processing" | "completed" | "failed"> = {
-        submitted: "queued",
-        processing: "processing",
-        succeed: "completed",
-        failed: "failed",
-      };
-      return {
-        jobId,
-        provider: "kling",
-        modelId: "kling/v2.6",
-        status: statusMap[data.status] ?? "processing",
-        estimatedCompletion: null,
-        providerMetadata: data,
-      };
-    },
-
-    async getResult(jobId: string) {
-      const resp = await fetch(
-        `${process.env.KLING_BASE_URL}/video/status/${jobId}`,
-        { headers: { Authorization: `Bearer ${apiKey}` } },
-      );
-      const data = await resp.json() as { result?: { url: string } };
-      const videos = data.result?.url
-        ? [{ url: data.result.url, width: 1920, height: 1080, duration: 5, contentType: "video/mp4" }]
-        : [];
-      return {
-        id: jobId,
-        status: "completed" as const,
-        videos,
-        provider: "kling",
-        modelId: "kling/v2.6",
-        providerMetadata: data,
-        timing: { startedAt: new Date(), completedAt: new Date(), durationMs: 0 },
-        cost: { providerCostUsd: 0.25, creditCost: 25 },
-      };
-    },
-
-    async cancelJob(_jobId: string) {},
-  };
+function createKlingGateway(_apiKey: string): VideoGenerationGateway {
+  // Kling 网关已迁移至 ephone/kling-gateway.ts，使用 OmniVideo API
+  // 此函数保留作为兼容处理，实际不会走到这里
+  throw new Error("Kling gateway is now in ephone/kling-gateway.ts");
 }

@@ -2,6 +2,7 @@ import type { AspectRatio } from "@/server/ai-gateway/types";
 import { EphoneClient } from "./client";
 import { resolveUrl } from "./resolve-url";
 import { ASPECT_RATIO_SIZE_MAP } from "./image-sizes";
+import { uploadImageToOSS } from "@/lib/oss-upload";
 
 async function urlToFile(url: string, name: string): Promise<File> {
   const tempMatch = url.match(/\/api\/temp-upload\/([^/]+)$/);
@@ -11,17 +12,18 @@ async function urlToFile(url: string, name: string): Promise<File> {
     if (entry) {
       return new File([new Uint8Array(entry.buffer)], name, { type: entry.mime || "image/png" });
     }
-    throw new Error("参考图已过期，请重新上传");
+    throw new Error("参考图已过期（服务重启后临时文件丢失），请重新上传");
   }
 
   url = resolveUrl(url);
   if (url.startsWith("data:")) {
     const res = await fetch(url);
+    if (!res.ok) throw new Error(`无法加载参考图（状态 ${res.status}），请重新上传`);
     const blob = await res.blob();
     return new File([blob], name, { type: blob.type || "image/png" });
   }
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`无法加载图片: ${res.status}`);
+  if (!res.ok) throw new Error(`无法加载参考图（状态 ${res.status}），请重新上传`);
   const blob = await res.blob();
   const ext = blob.type.includes("jpeg") ? "jpg" : "png";
   return new File([blob], name, { type: blob.type || "image/png" });
@@ -33,7 +35,7 @@ export async function runFusionImage(input: {
   prompt: string;
   modelId?: string;
   aspectRatio?: AspectRatio;
-}): Promise<{ url: string; revisedPrompt?: string }> {
+}): Promise<{ url: string; revisedPrompt?: string; timing: { llmDurationMs: number; ossDurationMs: number } }> {
   const apiKey = process.env.EPHONE_API_KEY;
   if (!apiKey) {
     throw new Error("请配置 EPHONE_API_KEY");
@@ -53,27 +55,41 @@ export async function runFusionImage(input: {
 
   const fusionPrompt =
     input.prompt.trim() ||
-    "将第二张图的印花图案自然融合到第一张图的底版服装上，保持底版版型、姿势与光照，印花清晰贴合面料纹理。";
+    "将第一张图的印花图案自然融合到第二张图的底版服装上，保持底版版型、姿势与光照，印花清晰贴合面料纹理。";
 
   const size = ASPECT_RATIO_SIZE_MAP[input.aspectRatio ?? "1:1"] ?? "1024x1024";
 
+  const llmStart = Date.now();
   const response = await openai.images.edit({
     model,
-    image: [baseFile, printFile],
+    image: [printFile, baseFile],
     prompt: fusionPrompt,
     size,
     n: 1,
+    response_format: "url",
   });
 
   const item = response.data?.[0];
-  if (item?.url) {
-    return { url: item.url, revisedPrompt: item.revised_prompt ?? undefined };
+  if (!item?.url && !item?.b64_json) {
+    throw new Error("融合图生成失败：无返回数据");
   }
-  if (item?.b64_json) {
-    return {
-      url: `data:image/png;base64,${item.b64_json}`,
-      revisedPrompt: item.revised_prompt ?? undefined,
-    };
-  }
-  throw new Error("融合图生成失败：无返回数据");
+
+  const llmDurationMs = Date.now() - llmStart;
+  const rawUrl = item.url
+    ? item.url
+    : `data:image/png;base64,${item.b64_json}`;
+
+  // 上传到 OSS 获取永久 URL
+  const ossStart = Date.now();
+  const oss = await uploadImageToOSS(rawUrl).catch((err) => {
+    console.error(`[fusion] OSS upload failed, falling back to original URL:`, err.message);
+    return null;
+  });
+  const ossDurationMs = Date.now() - ossStart;
+
+  return {
+    url: oss?.url ?? rawUrl,
+    revisedPrompt: item.revised_prompt ?? undefined,
+    timing: { llmDurationMs, ossDurationMs },
+  };
 }

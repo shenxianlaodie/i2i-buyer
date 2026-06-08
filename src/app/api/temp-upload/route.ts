@@ -1,0 +1,45 @@
+import { auth } from "@/lib/auth";
+import { putTempUpload } from "@/lib/temp-upload-store";
+import { NextResponse } from "next/server";
+
+const MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+};
+
+/**
+ * 上传文件到临时内存存储（不上传 OSS）。
+ * 适用于画板本地素材等不需要持久化到 OSS 的场景。
+ * 服务重启后文件会丢失，24 小时自动过期。
+ */
+export async function POST(req: Request) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "未登录" }, { status: 401 });
+  }
+
+  const form = await req.formData();
+  const file = form.get("file");
+  if (!(file instanceof File)) {
+    return NextResponse.json({ error: "缺少文件" }, { status: 400 });
+  }
+
+  const bytes = await file.arrayBuffer();
+  const buffer = Buffer.from(bytes);
+  const ext = file.name.split(".").pop()?.toLowerCase() || "png";
+  const safeExt = ["png", "jpg", "jpeg", "webp"].includes(ext) ? ext : "png";
+  const mime = file.type || MIME[safeExt] || "image/png";
+
+  const id = putTempUpload(session.user.id, buffer, mime);
+  // 返回完整绝对 URL（满足 Zod .url() 校验）
+  const origin =
+    process.env.NEXT_PUBLIC_APP_URL ??
+    (process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : req.headers.get("origin") ?? "http://localhost:3000");
+  const tempUrl = `${origin.replace(/\/$/, "")}/api/temp-upload/${id}`;
+
+  return NextResponse.json({ url: tempUrl });
+}

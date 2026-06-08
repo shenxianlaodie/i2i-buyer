@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { TRPCReactProvider } from "@/server/trpc/client";
+import { AuthProvider } from "@/components/auth/AuthProvider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { auth } from "@/lib/auth";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -20,11 +22,13 @@ export const metadata: Metadata = {
   description: "用 AI 生成精美图片与视频",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const session = await auth();
+
   return (
     <html
       lang="zh-CN"
@@ -33,10 +37,12 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         <TRPCReactProvider>
-          <TooltipProvider delay={300}>
-            {children}
-          </TooltipProvider>
-          <Toaster />
+          <AuthProvider session={session}>
+            <TooltipProvider delay={300}>
+              {children}
+            </TooltipProvider>
+            <Toaster />
+          </AuthProvider>
         </TRPCReactProvider>
       </body>
     </html>

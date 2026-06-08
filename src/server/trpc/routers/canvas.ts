@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure, adminProcedure } from "@/server/trpc/init";
+import { router, protectedProcedure } from "@/server/trpc/init";
 import { db } from "@/lib/db";
+import { isAdminOrManager } from "@/lib/auth-user";
 
 export const canvasRouter = router({
   trashItem: protectedProcedure
@@ -31,7 +32,7 @@ export const canvasRouter = router({
       return { success: true };
     }),
 
-  listTrashed: adminProcedure
+  listTrashed: protectedProcedure
     .input(
       z
         .object({
@@ -40,8 +41,10 @@ export const canvasRouter = router({
         })
         .optional(),
     )
-    .query(async ({ input }) => {
-      const where: Record<string, unknown> = {};
+    .query(async ({ ctx, input }) => {
+      const grantAccess = isAdminOrManager((ctx as any).userRole);
+
+      const where: Record<string, unknown> = grantAccess ? {} : { userId: ctx.userId };
       if (input?.type) where.type = input.type;
       if (input?.search) {
         where.prompt = { contains: input.search, mode: "insensitive" };
@@ -56,13 +59,18 @@ export const canvasRouter = router({
       return items;
     }),
 
-  permanentDelete: adminProcedure
+  permanentDelete: protectedProcedure
     .input(z.object({ id: z.string() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const trashed = await db.trashedCanvasItem.findUnique({
         where: { id: input.id },
       });
       if (!trashed) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const grantAccess = isAdminOrManager((ctx as any).userRole);
+      if (!grantAccess && trashed.userId !== ctx.userId) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
 
       if (trashed.itemId.startsWith("gen-")) {
         const genId = trashed.itemId.slice(4);

@@ -2,8 +2,10 @@ import { db } from "@/lib/db";
 
 const CREDIT_COSTS: Record<string, number> = {
   "gpt-image-1": 10,
-  "kling-v1-6/image-to-video": 25,
-  "kling-v3/text-to-video": 30,
+  "kling-v1-6/image-to-video": 20,
+  "kling-v3/text-to-video": 20,
+  "kling_omni_video": 20,
+  "sora-2": 20,
   "black-forest-labs/flux-dev": 5,
   "black-forest-labs/flux-schnell": 2,
   "black-forest-labs/flux-pro": 15,
@@ -11,7 +13,7 @@ const CREDIT_COSTS: Record<string, number> = {
   "dall-e-3": 20,
   "runway/gen-4": 50,
   "pika/2.0": 30,
-  "kling/v2.6": 25,
+  "kling/v2.6": 20,
 };
 
 export function getCreditCost(modelId: string): number {

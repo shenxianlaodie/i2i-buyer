@@ -28,11 +28,16 @@ import {
   ArrowDownToLine,
   Loader2,
   History,
+  Maximize2,
 } from "lucide-react";
 
 import { AdaptiveImage } from "@/components/ui/adaptive-image";
+import { ImagePreviewModal } from "@/components/ui/image-preview-modal";
 import { useAdminModels } from "@/hooks/use-admin-models";
+import { useActiveTasks } from "@/hooks/use-active-tasks";
+import { compressImageForPreview } from "@/lib/image-compression";
 import { getFusionRowImages, setFusionRowImages } from "@/lib/workbench-images";
+import { downloadImage } from "@/lib/download-helper";
 import {
   ASPECT_RATIOS,
   ASPECT_RATIO_LABELS,
@@ -170,6 +175,7 @@ type FusionRowData = {
   }[];
 };
 
+/** 上传原图到服务端（不压缩，保证 AI 生成画质） */
 async function uploadFile(file: File): Promise<string> {
   const fd = new FormData();
   fd.append("file", file);
@@ -192,6 +198,14 @@ function BaseImageField({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  // blob: URL 在页面刷新后立即失效；img onError 兜底服务端链接过期
+  const isBlobUrl = url.startsWith("blob:");
+  const lostHint = isBlobUrl || imgError;
+
+  // 每次 url 变化时重置错误状态
+  useEffect(() => { setImgError(false); }, [url]);
 
   const onFiles = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -200,26 +214,54 @@ function BaseImageField({
       toast.error("请选择图片文件");
       return;
     }
-    setUploading(true);
-    try {
-      if (list.length === 1) {
-        const u = await uploadFile(list[0]);
-        onChange(u);
-        onCommit(u);
-      } else {
-        await onImportFiles(list);
+    if (list.length === 1) {
+      // 单文件：压缩预览先行，原图异步上传（保证 AI 画质）
+      const file = list[0];
+      let previewUrl = "";
+      try {
+        const preview = await compressImageForPreview(file, 1200);
+        previewUrl = preview.url;
+        onChange(previewUrl); // 立即显示压缩预览，秒开不卡
+      } catch {
+        // 压缩失败也继续，只是没有即时预览
       }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "上传失败");
-    } finally {
-      setUploading(false);
+      setUploading(true);
+      try {
+        const serverUrl = await uploadFile(file); // 上传原图
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        onChange(serverUrl);
+        onCommit(serverUrl);
+      } catch (e) {
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        onChange("");
+        toast.error(e instanceof Error ? e.message : "上传失败");
+      } finally {
+        setUploading(false);
+      }
+    } else {
+      setUploading(true);
+      try {
+        await onImportFiles(list);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "上传失败");
+      } finally {
+        setUploading(false);
+      }
     }
   };
 
   return (
     <div className="space-y-1 w-full min-w-0">
       <span className="text-[10px] text-muted-foreground">印花</span>
-      {!url && (
+      {/* 素材丢失警告 */}
+      {lostHint && (
+        <div className="rounded bg-amber-500/10 border border-amber-500/30 px-2 py-1 flex items-center gap-1.5">
+          <span className="text-[10px] text-amber-400 leading-tight">
+            {isBlobUrl ? "⚠️ 本地预览已失效，请重新上传印花" : "⚠️ 印花图片无法加载，请重新上传"}
+          </span>
+        </div>
+      )}
+      {!url && !lostHint && (
         <Input
           value={url}
           onChange={(e) => onChange(e.target.value)}
@@ -231,7 +273,7 @@ function BaseImageField({
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept=".jpg,.jpeg,.png,.webp"
         multiple
         className="hidden"
         onChange={(e) => {
@@ -245,12 +287,19 @@ function BaseImageField({
         onClick={() => inputRef.current?.click()}
         className="w-full rounded border border-dashed bg-muted/30 hover:bg-muted/60 transition-colors overflow-hidden disabled:opacity-60"
       >
-        {uploading ? (
+        {url ? (
+          <div className="relative">
+            <AdaptiveImage src={url} maxHeightClass="max-h-48" className="border-0 rounded-none" onError={() => setImgError(true)} />
+            {uploading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+                <Loader2 className="size-5 animate-spin text-white" />
+              </div>
+            )}
+          </div>
+        ) : uploading ? (
           <div className="h-24 flex items-center justify-center">
             <Loader2 className="size-4 animate-spin text-muted-foreground" />
           </div>
-        ) : url ? (
-          <AdaptiveImage src={url} maxHeightClass="max-h-48" className="border-0 rounded-none" />
         ) : (
           <div className="h-24 flex flex-col items-center justify-center gap-1 px-2 text-muted-foreground">
             <span className="text-[10px]">点击批量添加印花</span>
@@ -288,6 +337,12 @@ function PrintImageField({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  const isBlobUrl = url.startsWith("blob:");
+  const lostHint = isBlobUrl || imgError;
+
+  useEffect(() => { setImgError(false); }, [url]);
 
   const onFiles = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -300,19 +355,39 @@ function PrintImageField({
       toast.error(`印花最多 ${groupSize} 张（与底版数量一致）`);
       return;
     }
-    setUploading(true);
-    try {
-      if (list.length === 1) {
-        const u = await uploadFile(list[0]);
-        onChange(u);
-        onCommit(u);
-      } else {
-        await onImportFiles(list);
+    if (list.length === 1) {
+      // 单文件：压缩预览先行，原图异步上传（保证 AI 画质）
+      const file = list[0];
+      let previewUrl = "";
+      try {
+        const preview = await compressImageForPreview(file, 1200);
+        previewUrl = preview.url;
+        onChange(previewUrl);
+      } catch {
+        // 压缩失败也继续
       }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "上传失败");
-    } finally {
-      setUploading(false);
+      setUploading(true);
+      try {
+        const serverUrl = await uploadFile(file);
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        onChange(serverUrl);
+        onCommit(serverUrl);
+      } catch (e) {
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        onChange("");
+        toast.error(e instanceof Error ? e.message : "上传失败");
+      } finally {
+        setUploading(false);
+      }
+    } else {
+      setUploading(true);
+      try {
+        await onImportFiles(list);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "上传失败");
+      } finally {
+        setUploading(false);
+      }
     }
   };
 
@@ -321,10 +396,18 @@ function PrintImageField({
       <span className="text-[10px] text-muted-foreground">
         印花（本组 {groupSize} 行，最多 {groupSize} 张）
       </span>
+      {/* 素材丢失警告 */}
+      {lostHint && (
+        <div className="rounded bg-amber-500/10 border border-amber-500/30 px-2 py-1 flex items-center gap-1.5">
+          <span className="text-[10px] text-amber-400 leading-tight">
+            {isBlobUrl ? "⚠️ 本地预览已失效，请重新上传印花" : "⚠️ 印花图片无法加载，请重新上传"}
+          </span>
+        </div>
+      )}
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept=".jpg,.jpeg,.png,.webp"
         multiple
         className="hidden"
         onChange={(e) => {
@@ -338,12 +421,19 @@ function PrintImageField({
         onClick={() => inputRef.current?.click()}
         className="w-full rounded border border-dashed bg-muted/30 hover:bg-muted/60 transition-colors overflow-hidden disabled:opacity-60"
       >
-        {uploading ? (
+        {url ? (
+          <div className="relative">
+            <AdaptiveImage src={url} maxHeightClass="max-h-48" className="border-0 rounded-none" onError={() => setImgError(true)} />
+            {uploading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+                <Loader2 className="size-5 animate-spin text-white" />
+              </div>
+            )}
+          </div>
+        ) : uploading ? (
           <div className="h-24 flex items-center justify-center">
             <Loader2 className="size-4 animate-spin text-muted-foreground" />
           </div>
-        ) : url ? (
-          <AdaptiveImage src={url} maxHeightClass="max-h-48" className="border-0 rounded-none" />
         ) : (
           <div className="h-24 flex flex-col items-center justify-center gap-1 px-2 text-muted-foreground">
             <span className="text-[10px]">点击批量添加印花</span>
@@ -383,14 +473,32 @@ function ImageField({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  const isBlobUrl = url.startsWith("blob:");
+  const lostHint = isBlobUrl || imgError;
+
+  useEffect(() => { setImgError(false); }, [url]);
 
   const onFile = async (file: File) => {
+    // 压缩预览先行，原图异步上传（保证 AI 画质）
+    let previewUrl = "";
+    try {
+      const preview = await compressImageForPreview(file, 1200);
+      previewUrl = preview.url;
+      onChange(previewUrl); // 立即显示压缩预览，秒开不卡
+    } catch {
+      // 压缩失败也继续
+    }
     setUploading(true);
     try {
-      const u = await uploadFile(file);
-      onChange(u);
-      onCommit(u);
+      const serverUrl = await uploadFile(file); // 上传原图
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      onChange(serverUrl);
+      onCommit(serverUrl);
     } catch (e) {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      onChange("");
       toast.error(e instanceof Error ? e.message : "上传失败");
     } finally {
       setUploading(false);
@@ -400,7 +508,15 @@ function ImageField({
   return (
     <div className="space-y-1 w-full min-w-0">
       <span className="text-[10px] text-muted-foreground">{label}</span>
-      {!url && (
+      {/* 素材丢失警告 */}
+      {lostHint && (
+        <div className="rounded bg-amber-500/10 border border-amber-500/30 px-2 py-1 flex items-center gap-1.5">
+          <span className="text-[10px] text-amber-400 leading-tight">
+            {isBlobUrl ? "⚠️ 本地预览已失效，请重新上传" : `⚠️ ${label}无法加载，请重新上传`}
+          </span>
+        </div>
+      )}
+      {!url && !lostHint && (
         <Input
           value={url}
           onChange={(e) => onChange(e.target.value)}
@@ -412,7 +528,7 @@ function ImageField({
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept=".jpg,.jpeg,.png,.webp"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -426,12 +542,19 @@ function ImageField({
         onClick={() => inputRef.current?.click()}
         className="w-full rounded border border-dashed bg-muted/30 hover:bg-muted/60 transition-colors overflow-hidden disabled:opacity-60"
       >
-        {uploading ? (
+        {url ? (
+          <div className="relative">
+            <AdaptiveImage src={url} maxHeightClass="max-h-48" className="border-0 rounded-none" onError={() => setImgError(true)} />
+            {uploading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+                <Loader2 className="size-5 animate-spin text-white" />
+              </div>
+            )}
+          </div>
+        ) : uploading ? (
           <div className="h-24 flex items-center justify-center">
             <Loader2 className="size-4 animate-spin text-muted-foreground" />
           </div>
-        ) : url ? (
-          <AdaptiveImage src={url} maxHeightClass="max-h-48" className="border-0 rounded-none" />
         ) : (
           <div className="h-24 flex items-center justify-center text-[10px] text-muted-foreground">
             {emptyHint}
@@ -479,6 +602,8 @@ function FusionRow({
   const trpc = useTRPC();
   const [generating, setGenerating] = useState(false);
   const [pendingGenId, setPendingGenId] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
 
   const updateRow = useMutation(
     trpc.fusion.updateRow.mutationOptions({
@@ -508,26 +633,106 @@ function FusionRow({
     }),
   );
 
+  // 必须在 genStatusQuery 之前声明
+  const pendingStartRef = useRef<number | null>(null);
+  // 记录已完成的 generation ID，防止 activeTasksQuery stale cache 重新触发
+  const completedGenIdsRef = useRef<Set<string>>(new Set());
+  const qc = useQueryClient();
+
+  // 切页回来恢复：从全局活跃任务中检测本行是否有正在生成的任务
+  const activeTasksQuery = useActiveTasks();
+  useEffect(() => {
+    if (!activeTasksQuery.data || pendingGenId) return;
+    const activeForRow = activeTasksQuery.data.find(
+      (t) =>
+        t.fusionRowId === row.id &&
+        (t.status === "PROCESSING" || t.status === "QUEUED" || t.status === "PENDING") &&
+        !completedGenIdsRef.current.has(t.id),
+    );
+    if (activeForRow) {
+      setPendingGenId(activeForRow.id);
+      setGenerating(true);
+      pendingStartRef.current = new Date(activeForRow.startedAt ?? activeForRow.createdAt).getTime();
+    }
+  }, [activeTasksQuery.data, row.id, pendingGenId]);
+
+  // 仅当 pendingGenId 从无到有时同步计时起点（不从已有值覆盖）
+  const prevGenIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (pendingGenId && pendingGenId !== prevGenIdRef.current) {
+      // 新任务：如果用恢复的时间点则保留，否则取当前时间
+      if (!pendingStartRef.current) {
+        pendingStartRef.current = Date.now();
+      }
+    }
+    if (!pendingGenId) {
+      pendingStartRef.current = null;
+    }
+    prevGenIdRef.current = pendingGenId;
+  }, [pendingGenId]);
+
   const genStatusQuery = useQuery({
     ...trpc.generation.getStatus.queryOptions({ generationId: pendingGenId! }),
     enabled: !!pendingGenId,
-    refetchInterval: 2000,
+    refetchInterval: () => {
+      const s = pendingStartRef.current;
+      if (!s) return 2000;
+      const dt = Date.now() - s;
+      if (dt < 10_000) return 1000;
+      if (dt < 30_000) return 2000;
+      if (dt < 70_000) return 4000;
+      if (dt < 150_000) return 8000;
+      return 10_000;
+    },
   });
 
+  // 耗时计时器 — 用后端的 startedAt/createdAt 计算，切页不重置
+  useEffect(() => {
+    if (!generating) { setElapsed(0); return; }
+    const startTime = genStatusQuery.data?.startedAt
+      ? new Date(genStatusQuery.data.startedAt).getTime()
+      : genStatusQuery.data?.createdAt
+        ? new Date(genStatusQuery.data.createdAt).getTime()
+        : Date.now();
+    const tick = () => setElapsed(Math.floor((Date.now() - startTime) / 1000));
+    tick();
+    const t = setInterval(tick, 500);
+    return () => clearInterval(t);
+  }, [generating, genStatusQuery.data?.startedAt, genStatusQuery.data?.createdAt]);
   useEffect(() => {
     if (!genStatusQuery.data) return;
     const gen = genStatusQuery.data;
-    if (gen.status === "COMPLETED") {
-      toast.success("融合图已生成");
-      setPendingGenId(null);
-      setGenerating(false);
-      onRefresh();
-    } else if (gen.status === "FAILED") {
-      toast.error(gen.errorMessage ?? "生成失败");
-      setPendingGenId(null);
-      setGenerating(false);
+    if (gen.status === "COMPLETED" || gen.status === "FAILED") {
+      // 记录为已完成，防止 activeTasksQuery stale cache 重新触发
+      completedGenIdsRef.current.add(gen.id);
+      // 失效 activeTasks 缓存，确保下次查询拿到最新数据
+      qc.invalidateQueries({ queryKey: trpc.generation.getActiveTasks.queryKey() });
+      if (gen.status === "COMPLETED") {
+        setPendingGenId(null);
+        setGenerating(false);
+        onRefresh();
+      } else {
+        toast.error(gen.errorMessage ?? "融合图生成失败");
+        setPendingGenId(null);
+        setGenerating(false);
+        onRefresh();
+      }
     }
   }, [genStatusQuery.data]);
+
+  // 前端超时兜底：超过 5 分钟无结果 → 视为失败，允许用户重试
+  useEffect(() => {
+    if (!generating || !pendingGenId) return;
+    const currentGenId = pendingGenId;
+    const timeout = setTimeout(() => {
+      completedGenIdsRef.current.add(currentGenId);
+      qc.invalidateQueries({ queryKey: trpc.generation.getActiveTasks.queryKey() });
+      setGenerating(false);
+      setPendingGenId(null);
+      toast.error("生成超时，请重试");
+    }, 5 * 60 * 1000);
+    return () => clearTimeout(timeout);
+  }, [generating, pendingGenId]);
 
   const activeVersion =
     row.versions.find((v) => v.id === row.activeVersionId) ?? row.versions[0];
@@ -668,19 +873,59 @@ function FusionRow({
             onClick={handleGenerate}
           >
             {generating ? (
-              <Loader2 className="size-3 animate-spin" />
+              <>
+                <Loader2 className="size-3 animate-spin" />
+                {elapsed}s
+              </>
             ) : (
-              <RefreshCw className="size-3" />
+              <>
+                <RefreshCw className="size-3" />
+                {activeVersion ? "重新生成" : "生成"}
+              </>
             )}
-            {activeVersion ? "重新生成" : "生成"}
           </Button>
         </div>
-        {activeVersion ? (
-          <AdaptiveImage src={activeVersion.outputUrl} maxHeightClass="max-h-64" />
+        {generating ? (
+          activeVersion ? (
+            // 有旧图时在图上叠加生成指示
+            <div className="relative">
+              <AdaptiveImage src={activeVersion.outputUrl} maxHeightClass="max-h-64 opacity-60" />
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/20">
+                <Loader2 className="size-5 animate-spin text-blue-400" />
+                <span className="text-xs text-blue-400">{elapsed}s</span>
+              </div>
+            </div>
+          ) : (
+            <div className="h-32 rounded border border-dashed border-blue-500/30 bg-blue-500/5 flex flex-col items-center justify-center gap-2">
+              <Loader2 className="size-5 animate-spin text-blue-400" />
+              <span className="text-xs text-blue-400">{elapsed}s</span>
+            </div>
+          )
+        ) : activeVersion ? (
+          <button
+            type="button"
+            className="group relative w-full cursor-zoom-in"
+            onClick={() => setPreviewSrc(activeVersion.outputUrl)}
+            title="点击查看大图"
+          >
+            <AdaptiveImage src={activeVersion.outputUrl} maxHeightClass="max-h-64" />
+            <span className="absolute top-1.5 right-1.5 flex size-6 items-center justify-center rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity">
+              <Maximize2 className="size-3" />
+            </span>
+          </button>
         ) : (
           <div className="h-32 rounded border border-dashed flex items-center justify-center text-xs text-muted-foreground">
             待生成
           </div>
+        )}
+        {previewSrc && (
+          <ImagePreviewModal
+            open={!!previewSrc}
+            onClose={() => setPreviewSrc(null)}
+            src={previewSrc}
+            downloadUrl={previewSrc}
+            alt="融合图预览"
+          />
         )}
         {row.versions.length > 0 && (
           <div className="mt-1.5 flex items-center gap-1">
@@ -907,21 +1152,22 @@ export function FusionWorkbench() {
     }
 
     setBatchGenerating(true);
+    const genIds: string[] = [];
     try {
-      const results = await Promise.all(
-        eligible.map(async (row) => {
-          const imgs = images[row.id]!;
-          await updateRow.mutateAsync({ rowId: row.id, prompt: row.prompt });
-          return generate.mutateAsync({
-            rowId: row.id,
-            modelId: imageModelId,
-            baseImageUrl: imgs.base!,
-            printImageUrl: imgs.print!,
-            aspectRatio,
-          });
-        }),
-      );
-      setPendingGenIds(results.map((r) => r.generationId));
+      // 逐条串行提交，避免瞬间占满队列导致 API 端互相拖慢
+      for (const row of eligible) {
+        const imgs = images[row.id]!;
+        await updateRow.mutateAsync({ rowId: row.id, prompt: row.prompt });
+        const result = await generate.mutateAsync({
+          rowId: row.id,
+          modelId: imageModelId,
+          baseImageUrl: imgs.base!,
+          printImageUrl: imgs.print!,
+          aspectRatio,
+        });
+        genIds.push(result.generationId);
+      }
+      setPendingGenIds(genIds);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "批量生成失败");
       setBatchGenerating(false);
@@ -940,18 +1186,17 @@ export function FusionWorkbench() {
 
     setDownloading(true);
     try {
-      const blobs = await Promise.all(
-        versions.map((v) => fetch(v.outputUrl).then((r) => r.blob())),
-      );
-      for (let i = 0; i < blobs.length; i++) {
-        const objUrl = URL.createObjectURL(blobs[i]);
-        const a = document.createElement("a");
-        a.href = objUrl;
-        a.download = `fusion-${i + 1}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(objUrl);
+      const images = getFusionRowImages(batch!.id!);
+      for (let i = 0; i < versions.length; i++) {
+        const printName = images[rows[i]?.id]?.printName;
+        const base = printName
+          ? printName.replace(/\.[^.]+$/, "").replace(/[\\/:*?"<>|]/g, "_")
+          : "fusion";
+        downloadImage(versions[i].outputUrl, `${base}_fusion_${i + 1}.png`);
+        // 浏览器对连续下载有限制，间隔 300ms 防止丢图
+        if (i < versions.length - 1) {
+          await new Promise((r) => setTimeout(r, 300));
+        }
       }
       toast.success(`已下载 ${versions.length} 张图片`);
     } catch (e) {

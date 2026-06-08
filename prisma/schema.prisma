@@ -166,6 +166,9 @@ model Asset {
   originalUrl   String
   cdnUrl        String?
   thumbnailUrl  String?
+  urlThumb      String?
+  urlPreview    String?
+  blurHash      String?
   width         Int?
   height        Int?
   duration      Float?
@@ -174,6 +177,10 @@ model Asset {
   metadata      Json               @default("{}")
   tags          String[]
   isFavorite    Boolean            @default(false)
+  inLibrary     Boolean            @default(false)
+  deletedAt     DateTime?
+  isDeleted     Boolean            @default(false)
+  generationStatus String?
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
 

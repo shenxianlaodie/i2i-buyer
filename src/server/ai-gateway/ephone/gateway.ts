@@ -9,9 +9,26 @@ import type {
 } from "../types";
 import { EphoneClient } from "./client";
 import { ASPECT_RATIO_SIZE_MAP } from "./image-sizes";
+import { resolveUrl } from "./resolve-url";
 
-async function urlToFile(url: string): Promise<File> {
-  const res = await fetch(url);
+async function urlToFile(url: string, signal?: AbortSignal): Promise<File> {
+  // 临时存储 URL：直读内存，避免 HTTP fetch 时因鉴权返回 401
+  const tempMatch = url.match(/\/api\/temp-upload\/([^/]+)$/);
+  if (tempMatch) {
+    const { getTempUploadData } = await import("@/lib/temp-upload-store");
+    const entry = getTempUploadData(tempMatch[1]);
+    if (entry) {
+      return new File(
+        [new Uint8Array(entry.buffer)],
+        "reference.png",
+        { type: entry.mime || "image/png" },
+      );
+    }
+    throw new Error("参考图已过期（服务重启后临时文件丢失），请重新上传");
+  }
+
+  url = resolveUrl(url);
+  const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`Failed to fetch reference image: ${res.status}`);
   const blob = await res.blob();
   const ext = blob.type.includes("jpeg") ? "jpg" : "png";
@@ -39,14 +56,15 @@ export function createEphoneImageGateway(apiKey: string): ImageGenerationGateway
       let data: { url?: string | null; b64_json?: string | null; revised_prompt?: string }[];
 
       if (input.referenceImage?.url) {
-        const imageFile = await urlToFile(input.referenceImage.url);
+        const imageFile = await urlToFile(input.referenceImage.url, input.signal);
         const response = await openai.images.edit({
           model,
           image: imageFile,
           prompt: input.prompt,
           size,
           n: input.numOutputs ?? 1,
-        });
+          response_format: "url",
+        }, { signal: input.signal });
         data = response.data ?? [];
       } else {
         const response = await openai.images.generate({
@@ -54,7 +72,8 @@ export function createEphoneImageGateway(apiKey: string): ImageGenerationGateway
           prompt: input.prompt,
           size,
           n: input.numOutputs ?? 1,
-        });
+          response_format: "url",
+        }, { signal: input.signal });
         data = response.data ?? [];
       }
 
@@ -106,12 +125,13 @@ export function createEphoneVideoGateway(apiKey: string): VideoGenerationGateway
         throw new Error("请选择视频模型");
       }
       const model = input.modelId;
-      const refUrl =
+      const rawRefUrl =
         input.referenceImage?.url ?? input.startFrameUrl ?? undefined;
+      const refUrl = rawRefUrl ? resolveUrl(rawRefUrl) : undefined;
 
       const taskInput: Record<string, unknown> = {
         prompt: input.prompt,
-        duration: String(input.duration ?? 5),
+        duration: input.duration ?? 5,
         aspect_ratio: input.aspectRatio ?? "16:9",
       };
       if (refUrl) {

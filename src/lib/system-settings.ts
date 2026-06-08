@@ -14,7 +14,7 @@ export const SETTING_KEYS = {
 } as const;
 
 const FALLBACK_IMAGE_MODEL = "gpt-image-1";
-const FALLBACK_VIDEO_MODEL = "kling-v1-6/image-to-video";
+const FALLBACK_VIDEO_MODEL = "veo3.1-4k";
 const FALLBACK_TEXT_MODEL = "gpt-4o-mini";
 
 let modelSettingsCache: { data: Awaited<ReturnType<typeof fetchModelSettings>>; at: number } | null = null;

@@ -5,7 +5,6 @@ import {
   Images,
   ImageIcon,
   Film,
-  Trash2,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
@@ -49,22 +48,6 @@ export function CanvasSidebar() {
             {!collapsed && item.label}
           </button>
         ))}
-        <div className="my-2 border-t border-white/10" />
-        <button
-          type="button"
-          title={collapsed ? "回收站" : undefined}
-          onClick={() => setFilter("trash")}
-          className={cn(
-            "flex w-full items-center rounded-lg text-sm transition-colors",
-            collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2.5",
-            filter === "trash"
-              ? "bg-zinc-800 text-white"
-              : "text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300",
-          )}
-        >
-          <Trash2 className="size-4 shrink-0" />
-          {!collapsed && "回收站"}
-        </button>
         <button
           type="button"
           title={collapsed ? "展开" : undefined}

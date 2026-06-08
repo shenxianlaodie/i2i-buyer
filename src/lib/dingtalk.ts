@@ -73,7 +73,7 @@ export async function findOrCreateDingtalkUser(profile: DingtalkProfile) {
 
   const email =
     profile.email?.trim().toLowerCase() ||
-    `${providerAccountId}@dingtalk.i2i.local`;
+    `${providerAccountId.toLowerCase()}@dingtalk.i2i.local`;
 
   let user = await db.user.findUnique({ where: { email } });
   if (!user) {

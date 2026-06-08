@@ -5,7 +5,8 @@ export type ProviderId =
   | "openai"
   | "runway"
   | "pika"
-  | "kling";
+  | "kling"
+  | "tuzi";
 
 export type ModelCapability =
   | "text-to-image"
@@ -65,6 +66,8 @@ export interface ImageGenerationInput {
   referenceImage?: ImageSource;
   maskImage?: ImageSource;
   strength?: number;
+  /** 用于超时中止底层 HTTP 请求 */
+  signal?: AbortSignal;
 }
 
 export interface VideoGenerationInput {
@@ -74,12 +77,15 @@ export interface VideoGenerationInput {
   provider: ProviderId;
   aspectRatio?: AspectRatio;
   duration?: number;
+  /** 视频尺寸，如 "1280x720"（Sora-2 直接透传） */
+  size?: string;
   resolution?: Resolution;
   seed?: number;
   referenceImage?: ImageSource;
   startFrameUrl?: string;
   endFrameUrl?: string;
   sound?: boolean;
+  mode?: "std" | "pro" | "4k";
 }
 
 // ── Unified Output Types ────────────────────────────────

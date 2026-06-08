@@ -29,6 +29,8 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { Trash2, Loader2, Clock, XCircle, RefreshCw } from "lucide-react";
+import { PerformanceDashboard } from "./PerformanceDashboard";
 
 type UserRow = {
   id: string;
@@ -85,6 +87,16 @@ export function AdminPanel() {
       onSuccess: () => {
         invalidateUsers();
         toast.success("已更新账户状态");
+      },
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+  const setRole = useMutation(
+    trpc.admin.setUserRole.mutationOptions({
+      onSuccess: (data) => {
+        invalidateUsers();
+        const label = data.role === "ADMIN" ? "超级管理员" : data.role === "MANAGER" ? "管理员" : "普通成员";
+        toast.success(`${data.name ?? data.email} 已设为${label}`);
       },
       onError: (e) => toast.error(e.message),
     }),
@@ -191,6 +203,9 @@ export function AdminPanel() {
           <TabsTrigger value="users">用户管理</TabsTrigger>
           <TabsTrigger value="prompts">提示词配置</TabsTrigger>
           <TabsTrigger value="models">模型配置</TabsTrigger>
+          <TabsTrigger value="performance">性能监测</TabsTrigger>
+          <TabsTrigger value="cleanup">系统清理</TabsTrigger>
+          <TabsTrigger value="tasks">任务控制</TabsTrigger>
         </TabsList>
 
         <TabsContent value="users" className="flex-1 overflow-auto p-4 mt-0">
@@ -208,6 +223,7 @@ export function AdminPanel() {
               <thead className="bg-muted/50">
                 <tr>
                   <th className="text-left p-2 font-medium">用户</th>
+                  <th className="text-left p-2 font-medium">角色</th>
                   <th className="text-left p-2 font-medium">配额</th>
                   <th className="text-left p-2 font-medium">用量</th>
                   <th className="text-left p-2 font-medium">状态</th>
@@ -222,6 +238,25 @@ export function AdminPanel() {
                       <div className="text-xs text-muted-foreground">
                         {u.email}
                       </div>
+                    </td>
+                    <td className="p-2">
+                      <Select
+                        value={u.role}
+                        onValueChange={(v) => {
+                          if (v && v !== u.role) {
+                            setRole.mutate({ userId: u.id, role: v as "USER" | "MANAGER" | "ADMIN" });
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="h-8 w-28 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="USER">普通成员</SelectItem>
+                          <SelectItem value="MANAGER">管理员</SelectItem>
+                          <SelectItem value="ADMIN">超级管理员</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </td>
                     <td className="p-2">{u.credits}</td>
                     <td className="p-2 text-xs text-muted-foreground">
@@ -454,6 +489,18 @@ export function AdminPanel() {
             </Card>
           </div>
         </TabsContent>
+
+        <TabsContent value="performance" className="flex-1 overflow-auto p-4 mt-0">
+          <PerformanceDashboard />
+        </TabsContent>
+
+        <TabsContent value="cleanup" className="flex-1 overflow-auto p-4 mt-0">
+          <CleanupSection />
+        </TabsContent>
+
+        <TabsContent value="tasks" className="flex-1 overflow-auto p-4 mt-0">
+          <TaskControlSection />
+        </TabsContent>
       </Tabs>
 
       <Dialog
@@ -550,6 +597,7 @@ export function AdminPanel() {
                     >
                       <span className="font-medium">{g.status}</span> ·{" "}
                       {g.type}
+                      {g.modelId ? ` · ${g.modelId}` : ""}
                       {g.poseType ? ` · ${g.poseType}` : ""}
                       <div className="text-muted-foreground truncate">
                         {g.prompt}
@@ -574,6 +622,223 @@ export function AdminPanel() {
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function CleanupSection() {
+  const trpc = useTRPC();
+  const qc = useQueryClient();
+  const [trashDays, setTrashDays] = useState("3");
+  const [libraryDays, setLibraryDays] = useState("7");
+  const [saved, setSaved] = useState(false);
+
+  const handleSave = () => {
+    // 保存到 localStorage 或 system settings
+    localStorage.setItem("cleanup-trash-days", trashDays);
+    localStorage.setItem("cleanup-library-days", libraryDays);
+    toast.success("清理参数已保存");
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const cleanupMut = useMutation(
+    trpc.trash.cleanup.mutationOptions({
+      onSuccess: (d) => {
+        toast.success(`清理完成：回收站 ${d.trashDeleted} 张，素材库 ${d.assetsTrashed} 张`);
+        qc.invalidateQueries({ queryKey: trpc.admin.listUsers.queryKey() });
+      },
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
+  const { data: logs } = useQuery(
+    trpc.admin.getCleanupLogs.queryOptions({ limit: 10 }),
+  );
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-lg font-semibold flex items-center gap-2">
+        <Trash2 className="size-5" /> 系统清理
+      </h2>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="space-y-2">
+          <label className="text-sm font-medium">回收站保留天数</label>
+          <Input value={trashDays} onChange={(e) => setTrashDays(e.target.value)} type="number" min="1" max="30" />
+          <p className="text-xs text-muted-foreground">超过此天数的回收站内容将被永久删除</p>
+        </div>
+        <div className="space-y-2">
+          <label className="text-sm font-medium">素材库保留天数</label>
+          <Input value={libraryDays} onChange={(e) => setLibraryDays(e.target.value)} type="number" min="1" max="365" />
+          <p className="text-xs text-muted-foreground">超过此天数的素材自动移入回收站</p>
+        </div>
+        <div className="flex items-end gap-2">
+          <Button onClick={handleSave} variant="outline" size="sm">
+            {saved ? "已保存" : "保存设置"}
+          </Button>
+          <Button
+            variant="destructive" size="sm"
+            onClick={() => cleanupMut.mutate()}
+            disabled={cleanupMut.isPending}
+          >
+            {cleanupMut.isPending ? <Loader2 className="size-4 mr-1 animate-spin" /> : <Trash2 className="size-4 mr-1" />}
+            立即执行
+          </Button>
+        </div>
+      </div>
+
+      {logs && logs.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium flex items-center gap-1"><Clock className="size-3.5" /> 清理记录</h3>
+          <div className="border rounded-lg divide-y">
+            {logs.map((log) => (
+              <div key={log.id} className="px-3 py-2 text-xs text-muted-foreground flex items-center gap-4">
+                <span className="w-36 shrink-0">{new Date(log.createdAt).toLocaleString("zh-CN")}</span>
+                <span>🗑 删除 {log.deletedCount}</span>
+                <span>📥 移入回收站 {log.trashedCount}</span>
+                {log.error && <span className="text-red-500 truncate">{log.error}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskControlSection() {
+  const trpc = useTRPC();
+  const qc = useQueryClient();
+
+  const activeQuery = useQuery({
+    ...trpc.admin.getActiveTasks.queryOptions(undefined, {
+      refetchInterval: 3000,
+      refetchOnWindowFocus: true,
+    }),
+  });
+
+  const logsQuery = useQuery(
+    trpc.admin.getTaskLogs.queryOptions({ limit: 30 }),
+  );
+
+  const cancelMut = useMutation(
+    trpc.admin.cancelTask.mutationOptions({
+      onSuccess: () => {
+        toast.success("任务已取消并退款");
+        qc.invalidateQueries(trpc.admin.getActiveTasks.queryFilter());
+        qc.invalidateQueries(trpc.admin.getTaskLogs.queryFilter({ limit: 30 }));
+      },
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
+  const active = activeQuery.data ?? [];
+  const logs = logsQuery.data ?? [];
+
+  function fmt(s: number) {
+    if (s < 60) return s + "s";
+    const m = Math.floor(s / 60);
+    return m + "m" + (s % 60) + "s";
+  }
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-lg font-semibold flex items-center gap-2">
+        <RefreshCw className="size-5" /> 任务控制
+        <Button variant="ghost" size="sm" className="h-7 ml-auto" onClick={() => { activeQuery.refetch(); logsQuery.refetch(); }}>
+          <RefreshCw className="size-3.5 mr-1" />刷新
+        </Button>
+      </h2>
+      <div>
+        <h3 className="text-sm font-medium mb-2">当前队列 ({active.length})</h3>
+        {active.length === 0 ? (
+          <p className="text-sm text-muted-foreground">无活跃任务</p>
+        ) : (
+          <div className="border rounded-lg divide-y">
+            {active.map((t) => (
+              <div key={t.id} className="px-3 py-2 flex items-center gap-3 text-xs">
+                <span className={"w-20 font-medium " + (t.status === "PROCESSING" ? "text-blue-500" : t.status === "QUEUED" ? "text-amber-500" : "text-muted-foreground")}>
+                  {t.status === "PROCESSING" ? "生成中" : t.status === "QUEUED" ? "排队中" : t.status}
+                </span>
+                <span className="w-12">{t.type}</span>
+                <span className="w-28 truncate text-muted-foreground">{t.modelId}</span>
+                <span className="w-32 truncate">{t.prompt}</span>
+                <span className="w-16 tabular-nums text-muted-foreground">{fmt(t.elapsed)}</span>
+                <span className="flex-1 truncate text-muted-foreground">{t.user?.name ?? t.user?.email?.split("@")[0]}</span>
+                <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500"
+                  onClick={() => cancelMut.mutate({ generationId: t.id })} disabled={cancelMut.isPending}>
+                  <XCircle className="size-3.5 mr-1" />取消
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div>
+        <h3 className="text-sm font-medium mb-2">最近日志 ({logs.length})</h3>
+        {logs.length === 0 ? (
+          <p className="text-sm text-muted-foreground">无日志</p>
+        ) : (
+          <div className="border rounded-lg overflow-x-auto">
+            <table className="w-full table-fixed text-[11px] leading-tight">
+              <thead>
+                <tr className="border-b bg-muted/50">
+                  <th className="text-left px-2 py-1.5 w-[92px] whitespace-nowrap">发起</th>
+                  <th className="text-left px-2 py-1.5 w-[92px] whitespace-nowrap">开始</th>
+                  <th className="text-right px-1 py-1.5 w-12">排队</th>
+                  <th className="text-center px-1 py-1.5 w-8">类型</th>
+                  <th className="text-center px-1 py-1.5 w-14">来源</th>
+                  <th className="text-left px-1 py-1.5 w-24 truncate">模型</th>
+                  <th className="text-left px-1 py-1.5 w-20 hidden xl:table-cell">参数</th>
+                  <th className="text-right px-2 py-1.5 w-14">LLM</th>
+                  <th className="text-right px-2 py-1.5 w-14">OSS</th>
+                  <th className="text-right px-2 py-1.5 w-14">总耗时</th>
+                  <th className="text-left px-2 py-1.5 w-16 truncate">用户</th>
+                  <th className="text-center px-1 py-1.5 w-10 whitespace-nowrap">状态</th>
+                  <th className="text-left px-2 py-1.5 w-32 whitespace-nowrap">失败原因</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {logs.map((t) => (
+                  <tr key={t.id} className="hover:bg-muted/30">
+                    <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">
+                      {t.createdAt ? new Date(t.createdAt).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "-"}
+                    </td>
+                    <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">
+                      {t.startedAt ? new Date(t.startedAt).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "-"}
+                    </td>
+                    <td className="px-1 py-1 text-right tabular-nums text-muted-foreground whitespace-nowrap">
+                      {t.queuedSec ? t.queuedSec+"s" : "-"}
+                    </td>
+                    <td className="px-1 py-1 text-center">{t.type === "IMAGE" ? "IMG" : "VID"}</td>
+                    <td className="px-1 py-1 text-center whitespace-nowrap">{t.source ?? "-"}</td>
+                    <td className="px-1 py-1 text-[10px] truncate max-w-[96px] text-muted-foreground" title={t.modelId}>{t.modelId}</td>
+                    <td className="px-1 py-1 text-[9px] text-muted-foreground hidden xl:table-cell">
+                      {(t as any).params ? [
+                        (t as any).params.duration ? `${(t as any).params.duration}s` : "",
+                        (t as any).params.mode === "pro" ? "高清" : (t as any).params.mode === "4k" ? "4K" : (t as any).params.mode === "std" ? "标清" : "",
+                        (t as any).params.sound === "on" ? "有声" : "",
+                        (t as any).params.aspectRatio ? (t as any).params.aspectRatio : "",
+                      ].filter(Boolean).join(" ") || "-" : "-"}
+                    </td>
+                    <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">{t.genDurationMs != null ? (t.genDurationMs/1000).toFixed(1)+"s" : "-"}</td>
+                    <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">{t.ossDurationMs != null ? (t.ossDurationMs/1000).toFixed(1)+"s" : "-"}</td>
+                    <td className="px-2 py-1 text-right tabular-nums font-medium whitespace-nowrap">{t.wallSec ?? "-"}s</td>
+                    <td className="px-2 py-1 text-muted-foreground truncate">{t.user?.name ?? t.user?.email?.split("@")[0] ?? "-"}</td>
+                    <td className={"px-1 py-1 text-center font-medium whitespace-nowrap " + (t.status === "COMPLETED" ? "text-green-600" : t.status === "FAILED" ? "text-red-500" : t.status === "CANCELLED" ? "text-amber-500" : "text-muted-foreground")}>
+                      {t.status === "COMPLETED" ? "完成" : t.status === "FAILED" ? "失败" : t.status === "CANCELLED" ? "取消" : t.status}
+                    </td>
+                    <td className="px-2 py-1 text-[10px] text-red-400 truncate max-w-[128px]" title={t.errorMessage ?? ""}>
+                      {t.status === "FAILED" ? (t.errorMessage || "-") : ""}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

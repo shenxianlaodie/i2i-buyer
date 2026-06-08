@@ -24,6 +24,12 @@ export function getApiKeys(): Partial<Record<ProviderId, string>> {
   }
   if (process.env.KLING_API_KEY) {
     keys.kling = process.env.KLING_API_KEY;
+  } else if (process.env.EPHONE_API_KEY) {
+    // Kling OmniVideo API 通过 ephone 代理，密钥与 ephone 一致
+    keys.kling = process.env.EPHONE_API_KEY;
+  }
+  if (process.env.TUZI_API_KEY) {
+    keys.tuzi = process.env.TUZI_API_KEY;
   }
 
   return keys;

@@ -1,6 +1,6 @@
 import { Sidebar } from "./Sidebar";
-import { Topbar } from "./Topbar";
 import { MobileNav } from "./MobileNav";
+import { ActiveTaskMonitor } from "./ActiveTaskMonitor";
 
 export function AppShell({
   children,
@@ -11,7 +11,7 @@ export function AppShell({
 }) {
   return (
     <div className="flex h-svh flex-col overflow-hidden">
-      <Topbar />
+      <ActiveTaskMonitor />
       <main className="flex-1 overflow-auto pb-14 lg:pb-16">
         {children}
       </main>

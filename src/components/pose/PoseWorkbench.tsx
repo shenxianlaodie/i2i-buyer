@@ -28,8 +28,10 @@ import { ProductCopyFields } from "./ProductCopyFields";
 import { AdaptiveImage } from "@/components/ui/adaptive-image";
 import { useAdminModels } from "@/hooks/use-admin-models";
 import { getPoseRowImages, setPoseRowImages } from "@/lib/workbench-images";
+import { downloadImage } from "@/lib/download-helper";
 import { POSE_TYPES, POSE_LABELS, type PoseType } from "@/lib/pose-types";
 import { cn } from "@/lib/utils";
+import { compressImageForPreview } from "@/lib/image-compression";
 import {
   expandColumnWidths,
   sumColumnWidths,
@@ -269,6 +271,7 @@ type PoseRowData = {
   }[];
 };
 
+/** 上传原图到服务端（不压缩，保证 AI 生成画质） */
 async function uploadFile(file: File): Promise<string> {
   const fd = new FormData();
   fd.append("file", file);
@@ -291,6 +294,13 @@ function SourceImageField({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  // blob: URL 在页面刷新后立即失效；img onError 兜底服务端链接过期
+  const isBlobUrl = url.startsWith("blob:");
+  const lostHint = isBlobUrl || imgError;
+
+  useEffect(() => { setImgError(false); }, [url]);
 
   const onFiles = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -299,26 +309,54 @@ function SourceImageField({
       toast.error("请选择图片文件");
       return;
     }
-    setUploading(true);
-    try {
-      if (list.length === 1) {
-        const u = await uploadFile(list[0]);
-        onChange(u);
-        onCommit(u);
-      } else {
-        await onImportFiles(list);
+    if (list.length === 1) {
+      // 单文件：压缩预览先行，原图异步上传（保证 AI 画质）
+      const file = list[0];
+      let previewUrl = "";
+      try {
+        const preview = await compressImageForPreview(file, 1200);
+        previewUrl = preview.url;
+        onChange(previewUrl); // 立即显示压缩预览，秒开不卡
+      } catch {
+        // 压缩失败也继续
       }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "上传失败");
-    } finally {
-      setUploading(false);
+      setUploading(true);
+      try {
+        const serverUrl = await uploadFile(file); // 上传原图
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        onChange(serverUrl);
+        onCommit(serverUrl);
+      } catch (e) {
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        onChange("");
+        toast.error(e instanceof Error ? e.message : "上传失败");
+      } finally {
+        setUploading(false);
+      }
+    } else {
+      setUploading(true);
+      try {
+        await onImportFiles(list);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "上传失败");
+      } finally {
+        setUploading(false);
+      }
     }
   };
 
   return (
     <div className="space-y-1 w-[164px] min-w-[160px]">
       <span className="text-[10px] text-muted-foreground">参考图</span>
-      {!url && (
+      {/* 素材丢失警告 */}
+      {lostHint && (
+        <div className="rounded bg-amber-500/10 border border-amber-500/30 px-2 py-1 flex items-center gap-1.5">
+          <span className="text-[10px] text-amber-400 leading-tight">
+            {isBlobUrl ? "⚠️ 本地预览已失效，请重新上传参考图" : "⚠️ 参考图无法加载，请重新上传"}
+          </span>
+        </div>
+      )}
+      {!url && !lostHint && (
         <Input
           value={url}
           onChange={(e) => onChange(e.target.value)}
@@ -330,7 +368,7 @@ function SourceImageField({
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept=".jpg,.jpeg,.png,.webp"
         multiple
         className="hidden"
         onChange={(e) => {
@@ -344,12 +382,19 @@ function SourceImageField({
         onClick={() => inputRef.current?.click()}
         className="w-full rounded border border-dashed bg-muted/30 hover:bg-muted/60 transition-colors overflow-hidden disabled:opacity-60"
       >
-        {uploading ? (
+        {url ? (
+          <div className="relative">
+            <AdaptiveImage src={url} maxHeightClass="max-h-48" className="border-0 rounded-none" onError={() => setImgError(true)} />
+            {uploading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+                <Loader2 className="size-5 animate-spin text-white" />
+              </div>
+            )}
+          </div>
+        ) : uploading ? (
           <div className="h-28 flex items-center justify-center">
             <Loader2 className="size-4 animate-spin text-muted-foreground" />
           </div>
-        ) : url ? (
-          <AdaptiveImage src={url} maxHeightClass="max-h-48" className="border-0 rounded-none" />
         ) : (
           <div className="h-28 flex flex-col items-center justify-center gap-1 px-2 text-muted-foreground">
             <span className="text-[10px]">点击选择参考图</span>
@@ -666,21 +711,21 @@ export function PoseWorkbench() {
       }
 
       setGeneratingPose(pose);
+      const genIds: string[] = [];
       try {
-        const results = await Promise.all(
-          eligible.map((row) =>
-            regeneratePose.mutateAsync({
-              rowId: row.id,
-              poseType: pose,
-              sourceImageUrl: images[row.id]!.source!.trim(),
-              modelId: imageModelId,
-              aspectRatio,
-            }),
-          ),
-        );
-        const ids = results.map((r) => r.generationId);
-        setPendingGenIds(ids);
-        toast.success(`已提交 ${ids.length} 个 ${POSE_LABELS[pose]} 生成任务`);
+        // 逐条串行提交，避免瞬间占满队列
+        for (const row of eligible) {
+          const result = await regeneratePose.mutateAsync({
+            rowId: row.id,
+            poseType: pose,
+            sourceImageUrl: images[row.id]!.source!.trim(),
+            modelId: imageModelId,
+            aspectRatio,
+          });
+          genIds.push(result.generationId);
+        }
+        setPendingGenIds(genIds);
+        toast.success(`已提交 ${genIds.length} 个 ${POSE_LABELS[pose]} 生成任务`);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "生成失败");
         setGeneratingPose(null);
@@ -753,18 +798,12 @@ export function PoseWorkbench() {
 
       setDownloadingPose(pose);
       try {
-        const blobs = await Promise.all(
-          items.map(({ url }) => fetch(url).then((r) => r.blob())),
-        );
-        for (let i = 0; i < blobs.length; i++) {
-          const objUrl = URL.createObjectURL(blobs[i]);
-          const a = document.createElement("a");
-          a.href = objUrl;
-          a.download = items[i].label;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(objUrl);
+        for (let i = 0; i < items.length; i++) {
+          downloadImage(items[i].url, items[i].label);
+          // 浏览器并发下载限制约 10 个，逐一下载间隔 300ms 避免丢失
+          if (i < items.length - 1) {
+            await new Promise((r) => setTimeout(r, 300));
+          }
         }
         toast.success(`已下载 ${items.length} 张图片`);
       } catch (e) {

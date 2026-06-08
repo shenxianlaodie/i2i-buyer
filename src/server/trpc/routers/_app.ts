@@ -7,6 +7,8 @@ import { fusionRouter } from "./fusion";
 import { poseRouter } from "./pose";
 import { adminRouter } from "./admin";
 import { canvasRouter } from "./canvas";
+import { collectionRouter } from "./collection";
+import { trashRouter } from "./trash";
 
 export const appRouter = router({
   generation: generationRouter,
@@ -17,6 +19,8 @@ export const appRouter = router({
   pose: poseRouter,
   admin: adminRouter,
   canvas: canvasRouter,
+  collection: collectionRouter,
+  trash: trashRouter,
 });
 
 export type AppRouter = typeof appRouter;

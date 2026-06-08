@@ -1,4 +1,4 @@
-export type FusionRowImages = { base?: string; print?: string };
+export type FusionRowImages = { base?: string; print?: string; printName?: string };
 export type PoseRowImages = { source?: string };
 
 function fusionKey(batchId: string) {

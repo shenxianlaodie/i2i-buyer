@@ -95,6 +95,8 @@ export default function DingtalkProvider(
     id: "dingtalk",
     name: "钉钉",
     type: "oauth",
+    /** 允许通过邮箱匹配自动关联已有账号（若无 Account 记录），钉钉为企业级认证，邮箱可信 */
+    allowDangerousEmailAccountLinking: true,
     clientId: options.clientId,
     clientSecret: options.clientSecret,
     authorization: {
@@ -150,7 +152,7 @@ export default function DingtalkProvider(
         name: profile.nick ?? "钉钉用户",
         email:
           profile.email?.trim().toLowerCase() ||
-          `${profile.unionId}@dingtalk.i2i.local`,
+          `${profile.unionId.toLowerCase()}@dingtalk.i2i.local`,
         image: profile.avatarUrl,
       };
     },

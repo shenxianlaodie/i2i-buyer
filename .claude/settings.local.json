@@ -19,7 +19,7 @@
       "Bash(npx next *)",
       "Bash(npx auth *)",
       "Bash(node -e \"console.log\\(require\\('crypto'\\).randomBytes\\(32\\).toString\\('base64'\\)\\)\")",
-      "Bash(echo 'DATABASE_URL=\"postgresql://xiangqianxi06:Xxq411381@pgm-bp1wh770x766jc896o.pg.rds.aliyuncs.com:5432/i2i-buyer\"')",
+      "Bash(echo 'DATABASE_URL=\"postgresql://xiangqianxi06:Xxq411381@pgm-bp1wh770x766jc89.pg.rds.aliyuncs.com:5432/i2i-buyer\"')",
       "Bash(npm run *)",
       "Bash(npx tsx *)",
       "Bash(taskkill /PID 69016 /F)",

@@ -1,15 +1,21 @@
 import "server-only";
 import { headers } from "next/headers";
 import { cache } from "react";
+import superjson from "superjson";
 import { createContext } from "./init";
 import { appRouter } from "./routers/_app";
 
 export const getQueryClient = cache(() => {
-  // Returns a new QueryClient per request for RSC
   const { QueryClient } = require("@tanstack/react-query");
   return new QueryClient({
     defaultOptions: {
-      queries: { staleTime: 30 * 1000 },
+      queries: { staleTime: 60 * 1000, gcTime: 10 * 60 * 1000 },
+      dehydrate: {
+        serializeData: superjson.serialize,
+      },
+      hydrate: {
+        deserializeData: superjson.deserialize,
+      },
     },
   });
 });

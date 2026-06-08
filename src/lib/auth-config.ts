@@ -8,12 +8,12 @@ import {
   fetchDingtalkProfile,
   findOrCreateDingtalkUser,
 } from "@/lib/dingtalk";
-import crypto from "crypto";
 
-function verifyPassword(input: string, stored: string): boolean {
+// 动态 import crypto 避免 Edge Runtime 编译报错（仅服务端鉴权时使用）
+async function verifyPassword(input: string, stored: string): Promise<boolean> {
+  const { pbkdf2Sync } = await import("crypto");
   const [salt, hash] = stored.split(":");
-  const inputHash = crypto
-    .pbkdf2Sync(input, salt, 1000, 64, "sha512")
+  const inputHash = pbkdf2Sync(input, salt, 1000, 64, "sha512")
     .toString("hex");
   return hash === inputHash;
 }
@@ -84,7 +84,7 @@ export const authConfig: NextAuthConfig = {
         if (!user || !user.password) return null;
         if (user.role?.toUpperCase() !== "ADMIN") return null;
 
-        const valid = verifyPassword(password, user.password);
+        const valid = await verifyPassword(password, user.password);
         if (!valid) return null;
         if (user.disabled) return null;
 
@@ -101,9 +101,12 @@ export const authConfig: NextAuthConfig = {
   callbacks: {
     authorized({ auth, request }) {
       const { pathname } = request.nextUrl;
-      const isLoggedIn = !!auth?.user;
 
-      if (pathname.startsWith("/api/auth")) return true;
+      // tRPC / API 路由：放行，由各自的 context 做认证
+      if (pathname.startsWith("/api/")) return true;
+
+      // 需要 user 对象中有实际标识字段，防止空对象/损坏 token 误判
+      const isLoggedIn = !!(auth?.user && (auth.user.email || auth.user.name));
       if (publicPaths.includes(pathname)) {
         if (pathname === "/login" && isLoggedIn) {
           return Response.redirect(new URL("/studio", request.nextUrl));

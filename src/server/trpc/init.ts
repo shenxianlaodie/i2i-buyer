@@ -42,7 +42,7 @@ const enforceAuth = t.middleware(async ({ ctx, next }) => {
   }
   const user = await db.user.findUnique({
     where: { id: ctx.userId },
-    select: { disabled: true },
+    select: { disabled: true, role: true },
   });
   if (!user) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -57,21 +57,28 @@ const enforceAuth = t.middleware(async ({ ctx, next }) => {
     ctx: {
       ...ctx,
       userId: ctx.userId,
+      userRole: user.role,
     },
   });
 });
 
-const enforceAdmin = t.middleware(async ({ ctx, next }) => {
-  const userId = ctx.userId as string;
-  const user = await db.user.findUnique({
-    where: { id: userId },
-    select: { role: true },
-  });
-  if (user?.role?.toUpperCase() !== "ADMIN") {
+const enforceAdmin = t.middleware(({ ctx, next }) => {
+  const role = (ctx as any).userRole as string | undefined;
+  // ADMIN（超管）和 MANAGER（普通管理员）均可访问管理功能
+  if (role?.toUpperCase() !== "ADMIN" && role?.toUpperCase() !== "MANAGER") {
     throw new TRPCError({ code: "FORBIDDEN", message: "需要管理员权限" });
+  }
+  return next({ ctx });
+});
+
+const enforceSuperAdmin = t.middleware(({ ctx, next }) => {
+  const role = (ctx as any).userRole as string | undefined;
+  if (role?.toUpperCase() !== "ADMIN") {
+    throw new TRPCError({ code: "FORBIDDEN", message: "需要超级管理员权限" });
   }
   return next({ ctx });
 });
 
 export const protectedProcedure = t.procedure.use(enforceAuth);
 export const adminProcedure = protectedProcedure.use(enforceAdmin);
+export const superAdminProcedure = protectedProcedure.use(enforceSuperAdmin);

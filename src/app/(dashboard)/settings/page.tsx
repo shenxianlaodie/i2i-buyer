@@ -1,15 +1,40 @@
 "use client";
 
+import { useState } from "react";
+import { useSession, signOut } from "next-auth/react";
+import { useQuery } from "@tanstack/react-query";
+import { useTRPC } from "@/server/trpc/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Key, CreditCard, LogOut, User } from "lucide-react";
-import { signOut } from "next-auth/react";
+import { Key, CreditCard, LogOut, User, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 export default function SettingsPage() {
+  const trpc = useTRPC();
+  const { data: session, status } = useSession();
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const creditQuery = useQuery(trpc.credits.balance.queryOptions(undefined, {
+    retry: false,
+  }));
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await signOut({ callbackUrl: "/login" });
+    } catch (e) {
+      toast.error("退出登录失败，请重试");
+      setLoggingOut(false);
+    }
+  };
+
+  const user = session?.user;
+  const initials = user?.name?.slice(0, 2) ?? user?.email?.slice(0, 2).toUpperCase() ?? "U";
+
   return (
     <div className="h-full overflow-auto">
       <div className="border-b p-4">
@@ -27,23 +52,29 @@ export default function SettingsPage() {
               <User className="size-4" />
               个人信息
             </CardTitle>
-            <CardDescription>更新你的个人资料</CardDescription>
+            <CardDescription>
+              {status === "loading"
+                ? "加载中..."
+                : status === "unauthenticated"
+                  ? "未登录，请先登录"
+                  : "当前登录账号信息"}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center gap-4">
               <Avatar className="size-16">
-                <AvatarImage src="" alt="用户头像" />
-                <AvatarFallback>U</AvatarFallback>
+                <AvatarImage src={user?.image ?? ""} alt={user?.name ?? "用户头像"} />
+                <AvatarFallback>{initials}</AvatarFallback>
               </Avatar>
-              <Button variant="outline" size="sm">更换头像</Button>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="name">名称</Label>
-              <Input id="name" placeholder="你的名字" />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="email">邮箱</Label>
-              <Input id="email" type="email" placeholder="you@example.com" />
+              <div>
+                <p className="font-medium">{user?.name ?? "—"}</p>
+                <p className="text-sm text-muted-foreground">{user?.email ?? "—"}</p>
+                {"role" in (user ?? {}) && (user as { role?: string }).role && (
+                  <span className="text-xs text-muted-foreground">
+                    角色：{(user as { role?: string }).role === "ADMIN" ? "管理员" : "普通用户"}
+                  </span>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -88,7 +119,13 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent>
             <div className="flex items-center justify-between py-2">
-              <span className="text-2xl font-bold">100</span>
+              {creditQuery.isLoading ? (
+                <Loader2 className="size-5 animate-spin" />
+              ) : creditQuery.isError ? (
+                <span className="text-2xl font-bold text-muted-foreground">加载失败</span>
+              ) : (
+                <span className="text-2xl font-bold">{creditQuery.data?.credits ?? 0}</span>
+              )}
               <span className="text-sm text-muted-foreground">剩余积分</span>
             </div>
             <Separator className="my-4" />
@@ -103,14 +140,53 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        <Button
-          variant="outline"
-          className="w-full gap-2 text-destructive hover:text-destructive"
-          onClick={() => void signOut({ callbackUrl: "/login" })}
-        >
-          <LogOut className="size-4" />
-          退出登录
-        </Button>
+        <div className="space-y-3">
+          <Button
+            variant="outline"
+            className="w-full gap-2 text-destructive hover:text-destructive"
+            onClick={handleLogout}
+            disabled={loggingOut}
+          >
+            {loggingOut ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <LogOut className="size-4" />
+            )}
+            {loggingOut ? "正在退出..." : "退出登录"}
+          </Button>
+
+          {status === "unauthenticated" && (
+            <p className="text-xs text-center text-muted-foreground">
+              当前未登录，部分功能可能不可用。
+              <Button variant="link" size="sm" className="px-1" onClick={() => window.location.href = "/login"}>
+                前往登录
+              </Button>
+            </p>
+          )}
+
+          {status === "loading" && (
+            <div className="text-center space-y-2">
+              <p className="text-xs text-muted-foreground">
+                会话加载超时？可能是登录凭据已过期。
+              </p>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  // 清除所有 cookie 并强制跳转登录页
+                  document.cookie.split(";").forEach((c) => {
+                    document.cookie = c
+                      .replace(/^ +/, "")
+                      .replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
+                  });
+                  window.location.href = "/login";
+                }}
+              >
+                强制登出并重新登录
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
